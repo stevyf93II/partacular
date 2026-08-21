@@ -7,28 +7,46 @@
 // never close, regions leak. Watershed basins are closed by construction.
 // Proven on diablo.glb (1.59M-tri fused car body): door, window frames,
 // interior separated cleanly at persist=10deg.
-import { weldSoup, SimplifierLike } from './print';
+import { weldSoup, SimplifierLike } from './print.js';
+export type { SimplifierLike } from './print.js';
 
-export interface SegmentOptions {
+// NO DEFAULTS ON TUNED KNOBS (Steve directive 2026-08-21): every parameter that
+// has ever been tuned is REQUIRED. The shipped values live in
+// segmentation.config.ts and are enforced against accepted.json by the deploy gate.
+export interface SegmentConfig {
   /** basins shallower than this (degrees of curvature relief) merge into deeper neighbors */
-  persistDeg?: number;
+  persistDeg: number;
   /** regions smaller than this fraction of the mesh get absorbed */
-  minRegionFrac?: number;
+  minRegionFrac: number;
   /** decimation target for the analysis proxy */
-  proxyTris?: number;
+  proxyTris: number;
   /** region boundaries with mean concave angle below this merge away (degrees) */
-  mergeStopDeg?: number;
+  mergeStopDeg: number;
+  /** normal-smoothing iterations before curvature */
+  smoothIters: number;
+  /** regions with boundary > factor*sqrt(area) are slivers and get absorbed */
+  thinnessFactor: number;
+}
+
+export function assertSegmentConfig(cfg: Partial<SegmentConfig> | undefined): asserts cfg is SegmentConfig {
+  const keys: (keyof SegmentConfig)[] = ['persistDeg', 'minRegionFrac', 'proxyTris', 'mergeStopDeg', 'smoothIters', 'thinnessFactor'];
+  if (!cfg) throw new Error('segmentation config missing entirely');
+  for (const k of keys) {
+    const v = cfg[k];
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`segmentation config missing tuned knob: ${k}`);
+  }
 }
 
 /** Segment a triangle soup; returns per-triangle group labels (0..groupCount-1). */
 export function watershedSegment(
   simplifier: SimplifierLike,
   soup: Float32Array,
-  opts: SegmentOptions = {},
+  cfg: SegmentConfig,
 ): { triGroup: Uint32Array; groupCount: number } {
-  const persist = ((opts.persistDeg ?? 10) * Math.PI) / 180;
-  const minFrac = opts.minRegionFrac ?? 0.003;
-  const proxyTarget = opts.proxyTris ?? 150_000;
+  assertSegmentConfig(cfg);
+  const persist = (cfg.persistDeg * Math.PI) / 180;
+  const minFrac = cfg.minRegionFrac;
+  const proxyTarget = cfg.proxyTris;
   const fullTris = soup.length / 9;
 
   // ---- analysis proxy: weld, then decimate if large ----
@@ -72,9 +90,9 @@ export function watershedSegment(
     edgeInfo.push([arr[0], arr[3], arr[1], arr[2]]);
   }
 
-  // ---- smooth normals (3 iterations) to suppress voxel-staircase noise ----
+  // ---- smooth normals to suppress voxel-staircase noise ----
   let sn = fn;
-  for (let it = 0; it < 3; it++) {
+  for (let it = 0; it < cfg.smoothIters; it++) {
     const nx = new Float32Array(nTri * 3);
     for (let k = 0; k < nTri; k++) {
       let x = sn[k * 3] * 1.5, y = sn[k * 3 + 1] * 1.5, z = sn[k * 3 + 2] * 1.5;
@@ -185,7 +203,7 @@ export function watershedSegment(
   // this glues a panel's inner+outer skins (convex rim) and arbitrary patch
   // borders back together, leaving semantic parts (door, hood, body). ----
   {
-    const stopRad = ((opts.mergeStopDeg ?? 13) * Math.PI) / 180;
+    const stopRad = (cfg.mergeStopDeg * Math.PI) / 180;
     for (let iter = 0; iter < 200; iter++) {
       const bSum = new Map<string, number>(), bCnt = new Map<string, number>();
       for (let i = 0; i < edgeInfo.length; i++) {
@@ -226,7 +244,7 @@ export function watershedSegment(
     const thin = new Set<number>();
     for (const [id, a] of area) {
       const b = bTotal.get(id) || 0;
-      if (b > 8 * Math.sqrt(a)) thin.add(id);
+      if (b > cfg.thinnessFactor * Math.sqrt(a)) thin.add(id);
     }
     if (thin.size === 0) break;
     // each thin region merges into the neighbor sharing the longest boundary
