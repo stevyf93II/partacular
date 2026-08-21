@@ -6,6 +6,7 @@ import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometr
 import { splitInWorker } from './geometry/splitClient';
 import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
 import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
+import { export3MFInWorker } from './geometry/printClient';
 
 export const PALETTE = [0x4da3ff, 0xffb347, 0x7ee081, 0xff7eb6, 0xb59bff, 0x6be2e0, 0xffd66b, 0xff8d6b, 0x9fd356, 0x62b6ff];
 
@@ -47,8 +48,17 @@ function recolorSelected() {
   doc.setColor(sel, PALETTE[(i + 1) % PALETTE.length]);
 }
 
-async function doExport(kind: 'glb' | 'stl') {
+async function doExport(kind: 'glb' | 'stl' | '3mf') {
   if (doc.count() === 0) { ui.showToast('Nothing to save yet'); return; }
+  if (kind === '3mf') {
+    ui.showToast('Merging parts to a watertight solid…');
+    const res = await export3MFInWorker(doc);
+    downloadBlob(res.blob, 'partacular.3mf');
+    ui.showToast(res.failedNames.length === 0
+      ? `Saved partacular.3mf — watertight, ${res.tris} triangles`
+      : `Saved — ${res.failedNames.length} part(s) couldn't be sealed; your slicer may repair them`);
+    return;
+  }
   ui.showToast(`Building ${kind.toUpperCase()}…`);
   const blob = kind === 'glb' ? await exportGLB(doc) : exportSTL(doc);
   downloadBlob(blob, `partacular.${kind}`);
@@ -104,4 +114,9 @@ function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[])
   }
   doc.addParts(metas);
   viewport.fitCamera();
+}
+
+// PWA: service worker (network-first in sw.js, so fresh deploys always win when online).
+if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+  addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
 }

@@ -36,4 +36,8 @@ Deploys to Netlify (site: partacular) — `netlify.toml` builds `npm run build`,
 ## Roadmap
 
 - Phase 3: duplicate, recolor, export GLB/STL
-- Phase 4: print path — Manifold merge to watertight, 3MF export, PWA install
+- Phase 4 (shipped): print path — Manifold merge to watertight, 3MF export, PWA install
+
+## Icons
+
+`public/icons/` is generated, not committed: `npm i -D sharp && node scripts/gen-icons.mjs` (source: `icon.svg`).

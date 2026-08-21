@@ -6,7 +6,7 @@ export interface UIHooks {
   onRotate: () => void;
   onDuplicate: () => void;
   onRecolor: () => void;
-  onExport: (kind: 'glb' | 'stl') => void;
+  onExport: (kind: 'glb' | 'stl' | '3mf') => void;
   onFit: () => void;
 }
 
@@ -39,6 +39,7 @@ export function initUI(doc: Document, hooks: UIHooks) {
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.classList.remove('show'); });
   $('exportglb').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('glb'); });
   $('exportstl').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('stl'); });
+  $('export3mf').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('3mf'); });
   $('pillhide').addEventListener('click', () => { if (doc.selectedId) doc.setVisible(doc.selectedId, false); });
   undoBtn.addEventListener('click', () => { const name = doc.undo(); if (name) showToast(`Restored ${name}`); refresh(); });
 
