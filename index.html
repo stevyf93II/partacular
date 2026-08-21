@@ -37,6 +37,14 @@
     display:none; align-items:center; gap:8px; background:var(--panel2); border:1px solid #313a4d;
     border-radius:999px; padding:8px 10px 8px 16px; z-index:11; box-shadow:0 8px 30px rgba(0,0,0,.5); }
   #pill.show { display:flex; }
+  #pill { flex-wrap:wrap; justify-content:center; max-width:94vw; }
+  #pillcolor { width:30px; height:30px; border-radius:999px; border:2px solid #fff3 !important; padding:0 !important; background:#4da3ff; }
+  #sheet { position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:40;
+    background:rgba(0,0,0,.55); }
+  #sheet.show { display:flex; }
+  .sheet-card { background:var(--panel2); border:1px solid #313a4d; border-radius:20px 20px 0 0; width:100%;
+    max-width:480px; padding:18px 18px calc(env(safe-area-inset-bottom) + 18px); display:flex; flex-direction:column; gap:10px; }
+  .sheet-title { font-size:14px; font-weight:800; letter-spacing:.08em; color:var(--dim); text-align:center; margin-bottom:4px; }
   #pill .pname { font-size:13px; font-weight:700; max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #pill button { border:none; border-radius:999px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; }
   #pill .hide { background:#2a3140; color:var(--text); }
@@ -70,10 +78,13 @@
     <div class="chip" id="partcount">no model</div>
     <div class="spacer"></div>
     <button class="btn" id="undo">Undo</button>
+    <button class="btn" id="savebtn">Save</button>
     <button class="btn" id="openbtn">Open</button>
   </div>
   <div id="pill">
     <div class="pname" id="pillname">part</div>
+    <button id="pillcolor" title="Change color"></button>
+    <button class="hide" id="pillcopy">Copy</button>
     <button class="hide" id="pillrot">⟳ 45°</button>
     <button class="hide" id="pillhide">Hide</button>
     <button class="del" id="pilldel">Delete</button>
@@ -92,6 +103,14 @@
       <button class="btn" id="demobtn">Try the demo</button>
     </div>
     <p style="font-size:12px">GLB &middot; GLTF &middot; OBJ &middot; STL</p>
+  </div>
+  <div id="sheet">
+    <div class="sheet-card">
+      <div class="sheet-title">Save model</div>
+      <button class="btn primary" id="exportglb">GLB — keeps parts &amp; colors</button>
+      <button class="btn" id="exportstl">STL — for 3D printing</button>
+      <button class="btn" id="sheetcancel">Cancel</button>
+    </div>
   </div>
   <div id="toast"></div>
   <input type="file" id="fileinput" accept=".glb,.gltf,.obj,.stl" />
