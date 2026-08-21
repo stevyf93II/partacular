@@ -42,7 +42,7 @@ function bakeCurrentToSoup(): THREE.BufferGeometry | null {
     const mtx = new THREE.Matrix4().compose(
       new THREE.Vector3(...t.position),
       q.setFromAxisAngle(yAxis, t.rotationY),
-      new THREE.Vector3(t.scale, t.scale, t.scale),
+      new THREE.Vector3(...t.scale),
     );
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
     const idx = geo.getIndex();
@@ -84,9 +84,9 @@ function duplicateSelected() {
   const id = newId();
   putGeometry(id, geo); // geometry is shared between copies
   const t = identityTransform();
-  const offset = Math.max(0.15 * Math.cbrt(src.triCount), 0.2) * src.transform.scale;
+  const offset = Math.max(0.15 * Math.cbrt(src.triCount), 0.2) * Math.max(...src.transform.scale);
   t.position = [src.transform.position[0] + offset, src.transform.position[1], src.transform.position[2] + offset];
-  t.rotationY = src.transform.rotationY; t.scale = src.transform.scale;
+  t.rotationY = src.transform.rotationY; t.scale = [...src.transform.scale];
   doc.addParts([{ id, name: `${src.name} copy`, triCount: src.triCount, visible: true, color: src.color, transform: t }], true);
   doc.select(id);
 }

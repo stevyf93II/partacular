@@ -38,6 +38,9 @@
     border-radius:14px; padding:10px 14px; }
   .explode-row label { font-size:12px; color:var(--dim); font-weight:700; letter-spacing:.08em; }
   input[type=range] { flex:1; accent-color:var(--accent); height:28px; }
+  .axisrow { display:flex; align-items:center; gap:10px; }
+  .axisrow label { font-size:12px; color:var(--dim); font-weight:700; letter-spacing:.06em; width:44px; }
+  .axisrow span { font-size:12px; color:var(--dim); width:52px; text-align:right; font-variant-numeric:tabular-nums; }
   #pill { display:none; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
   #pill.show { display:flex; }
   #pill .pname { flex:1; text-align:left; }
@@ -90,10 +93,16 @@
     <div id="pill" class="explode-row">
       <div class="pname" id="pillname">part</div>
       <button id="pillcolor" title="Change color"></button>
+      <button class="hide" id="pillsize">Size</button>
       <button class="hide" id="pillcopy">Copy</button>
       <button class="hide" id="pillrot">⟳ 45°</button>
       <button class="hide" id="pillhide">Hide</button>
       <button class="del" id="pilldel">Delete</button>
+    </div>
+    <div id="sizerow" class="explode-row" style="display:none; flex-direction:column; align-items:stretch; gap:6px;">
+      <div class="axisrow"><label>W&nbsp;(X)</label><input type="range" id="scalex" min="0" max="100" value="50" /><span id="scalexv">1.00×</span></div>
+      <div class="axisrow"><label>H&nbsp;(Y)</label><input type="range" id="scaley" min="0" max="100" value="50" /><span id="scaleyv">1.00×</span></div>
+      <div class="axisrow"><label>L&nbsp;(Z)</label><input type="range" id="scalez" min="0" max="100" value="50" /><span id="scalezv">1.00×</span></div>
     </div>
     <div class="explode-row">
       <label>EXPLODE</label>
