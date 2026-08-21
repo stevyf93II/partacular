@@ -1,7 +1,7 @@
 // Thin worker shell around the pure print core (same pattern as split.worker).
 import Module from 'manifold-3d';
 import { MeshoptSimplifier } from 'meshoptimizer';
-import { buildPrintFile, decimateSoup, ManifoldAPI, PrintPart } from './print';
+import { buildPrintFile, decimateSoup, ManifoldAPI, PrintPart } from './print.js';
 
 // Above this many triangles per part, decimate before sealing: Manifold build
 // time and 3MF XML size both scale with tris (a 2M-tri AI scan took ~2 min and
@@ -17,7 +17,7 @@ function manifoldModule(): Promise<ManifoldAPI> {
 }
 
 self.onmessage = async (e: MessageEvent) => {
-  const { jobId, parts } = e.data as { jobId: number; parts: PrintPart[] };
+  const { jobId, parts, provenance } = e.data as { jobId: number; parts: PrintPart[]; provenance: string };
   try {
     const api = await manifoldModule();
     for (const p of parts) {
@@ -26,7 +26,7 @@ self.onmessage = async (e: MessageEvent) => {
         p.positions = decimateSoup(MeshoptSimplifier, p.positions, DECIMATE_TARGET_TRIS);
       }
     }
-    const res = buildPrintFile(api, parts);
+    const res = buildPrintFile(api, parts, provenance ?? '');
     (self as unknown as Worker).postMessage(
       { jobId, ok: true, data: res.data, merged: res.merged, failedNames: res.failedNames, tris: res.tris },
       [res.data.buffer as ArrayBuffer]

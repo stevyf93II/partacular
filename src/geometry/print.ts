@@ -75,9 +75,13 @@ function meshXML(id: number, verts: Float32Array, tris: Uint32Array, name: strin
   return `<object id="${id}" name="${safe}" type="model"><mesh><vertices>${v.join('')}</vertices><triangles>${t.join('')}</triangles></mesh></object>`;
 }
 
-function pack3MF(objects: string[], ids: number[]): Uint8Array {
+const xmlEscape = (t: string) => t.replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]!));
+
+function pack3MF(objects: string[], ids: number[], provenance: string): Uint8Array {
   const model = `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<metadata name="Application">Partacular</metadata>
+<metadata name="partacular:config">${xmlEscape(provenance)}</metadata>
 <resources>${objects.join('')}</resources>
 <build>${ids.map(i => `<item objectid="${i}"/>`).join('')}</build>
 </model>`;
@@ -103,7 +107,7 @@ function pack3MF(objects: string[], ids: number[]): Uint8Array {
  * one watertight object. Parts that cannot be sealed ride along as separate
  * objects (slicers usually repair) and are reported in failedNames.
  */
-export function buildPrintFile(api: ManifoldAPI, parts: PrintPart[]): PrintOutput {
+export function buildPrintFile(api: ManifoldAPI, parts: PrintPart[], provenance: string): PrintOutput {
   const { Manifold, Mesh } = api;
   const solids: ManifoldLike[] = [];
   const failed: PrintPart[] = [];
@@ -152,5 +156,5 @@ export function buildPrintFile(api: ManifoldAPI, parts: PrintPart[]): PrintOutpu
     objects.push(meshXML(nextId, f.positions, triVerts, `${f.name} (unsealed)`));
     buildIds.push(nextId++);
   }
-  return { data: pack3MF(objects, buildIds), merged: solids.length, failedNames: failed.map(f => f.name), tris: mergedTris };
+  return { data: pack3MF(objects, buildIds, provenance), merged: solids.length, failedNames: failed.map(f => f.name), tris: mergedTris };
 }
