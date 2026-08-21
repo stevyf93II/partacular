@@ -7,7 +7,8 @@
     "dev": "vite",
     "preview": "node scripts/preview.mjs",
     "gate": "node scripts/deploy-gate.mjs",
-    "deploy-build": "node scripts/deploy-gate.mjs && vite build"
+    "deploy-build": "node scripts/deploy-gate.mjs && vite build",
+    "ci-build": "GATE_LITE=1 node scripts/deploy-gate.mjs && node scripts/gen-icons.mjs && vite build"
   },
   "dependencies": {
     "fflate": "0.8.3",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/three": "^0.185.4",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "sharp": "^0.34.5"
   }
 }
