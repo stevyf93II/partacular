@@ -15,6 +15,41 @@ export interface ManifoldAPI {
   Manifold: (new (m: MeshLike) => ManifoldLike) & { union(list: ManifoldLike[]): ManifoldLike };
 }
 
+export interface SimplifierLike {
+  simplify(indices: Uint32Array, positions: Float32Array, stride: number,
+    targetIndexCount: number, targetError: number, flags?: string[]): [Uint32Array, number];
+}
+
+/** Weld exact-duplicate vertices of a soup into an indexed mesh. */
+export function weldSoup(soup: Float32Array): { positions: Float32Array; indices: Uint32Array } {
+  const n = soup.length / 3;
+  const indices = new Uint32Array(n);
+  const map = new Map<string, number>();
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const x = soup[i * 3], y = soup[i * 3 + 1], z = soup[i * 3 + 2];
+    const key = x + ',' + y + ',' + z;
+    let vi = map.get(key);
+    if (vi === undefined) { vi = out.length / 3; map.set(key, vi); out.push(x, y, z); }
+    indices[i] = vi;
+  }
+  return { positions: new Float32Array(out), indices };
+}
+
+/** Decimate a triangle soup to ~targetTris using meshoptimizer. Returns a new soup. */
+export function decimateSoup(simplifier: SimplifierLike, soup: Float32Array, targetTris: number): Float32Array {
+  const tris = soup.length / 9;
+  if (tris <= targetTris) return soup;
+  const { positions, indices } = weldSoup(soup);
+  const [newIdx] = simplifier.simplify(indices, positions, 3, targetTris * 3, 0.01, ['LockBorder']);
+  const out = new Float32Array(newIdx.length * 3);
+  for (let i = 0; i < newIdx.length; i++) {
+    const v = newIdx[i] * 3;
+    out[i * 3] = positions[v]; out[i * 3 + 1] = positions[v + 1]; out[i * 3 + 2] = positions[v + 2];
+  }
+  return out;
+}
+
 /** Three.js is Y-up; 3MF/printers are Z-up. Proper rotation (x,y,z) -> (x,-z,y). */
 export function toZUp(p: Float32Array): Float32Array {
   const out = new Float32Array(p.length);
