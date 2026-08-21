@@ -15,6 +15,8 @@ export class Viewport {
   private raycaster = new THREE.Raycaster();
   private visuals = new Map<string, PartVisual>();
   private modelCenter = new THREE.Vector3();
+  private grid!: THREE.GridHelper;
+  private gridSize = 10;
   private modelRadius = 1;
   private lastTap = { x: -999, y: -999, hits: [] as string[], cursor: 0 };
 
@@ -49,7 +51,8 @@ export class Viewport {
     const key = new THREE.DirectionalLight(0xffffff, 2.0); key.position.set(4, 7, 4);
     const rim = new THREE.DirectionalLight(0x88aaff, 0.7); rim.position.set(-5, 3, -4);
     this.scene.add(hemi, key, rim);
-    this.scene.add(new THREE.GridHelper(10, 20, 0x2a3140, 0x1d2330));
+    this.grid = new THREE.GridHelper(10, 20, 0x2a3140, 0x1d2330);
+    this.scene.add(this.grid);
 
     addEventListener('resize', () => {
       // iOS/desktop can fire resize with zero dimensions mid-transition;
@@ -289,6 +292,17 @@ export class Viewport {
       if (v.explodeDir.lengthSq() < 1e-12) v.explodeDir.set(0, 1, 0).multiplyScalar(this.modelRadius * 0.05);
     }
     if (fit) {
+      // Adaptive grid: a fixed 10-unit grid at the wrong model scale renders as
+      // giant lines crossing the whole view (or an invisible speck). Rebuild it
+      // near the model's own scale, and only when meaningfully off.
+      const want = Math.pow(2, Math.ceil(Math.log2(Math.max(this.modelRadius * 3, 0.001))));
+      if (want / this.gridSize > 1.9 || this.gridSize / want > 1.9) {
+        this.scene.remove(this.grid);
+        this.grid.geometry.dispose(); (this.grid.material as THREE.Material).dispose();
+        this.grid = new THREE.GridHelper(want, 20, 0x2a3140, 0x1d2330);
+        this.scene.add(this.grid);
+        this.gridSize = want;
+      }
       this.controls.target.copy(this.modelCenter);
       const d = this.modelRadius * 2.2;
       this.camera.position.copy(this.modelCenter).add(new THREE.Vector3(d, d * 0.7, d));

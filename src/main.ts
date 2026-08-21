@@ -25,7 +25,57 @@ const ui = initUI(doc, {
   onRecolor: () => recolorSelected(),
   onExport: kind => doExport(kind).catch(err => ui.showToast(`Export failed: ${err.message ?? err}`)),
   onFit: () => viewport.fitCamera(),
+  onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
 });
+let modelName = 'model';
+
+/** All visible parts baked into one world-space soup geometry. */
+function bakeCurrentToSoup(): THREE.BufferGeometry | null {
+  const metas = doc.list().filter(m => m.visible);
+  if (metas.length === 0) return null;
+  let total = 0;
+  const baked: Float32Array[] = [];
+  const q = new THREE.Quaternion(), yAxis = new THREE.Vector3(0, 1, 0), v = new THREE.Vector3();
+  for (const meta of metas) {
+    const geo = getGeometry(meta.id); if (!geo) continue;
+    const t = meta.transform;
+    const mtx = new THREE.Matrix4().compose(
+      new THREE.Vector3(...t.position),
+      q.setFromAxisAngle(yAxis, t.rotationY),
+      new THREE.Vector3(t.scale, t.scale, t.scale),
+    );
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const idx = geo.getIndex();
+    const n = idx ? idx.count : pos.count;
+    const out = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(mtx);
+      out[i * 3] = v.x; out[i * 3 + 1] = v.y; out[i * 3 + 2] = v.z;
+    }
+    baked.push(out); total += out.length;
+  }
+  if (baked.length === 0) return null;
+  const buf = new Float32Array(total);
+  let off = 0; for (const b of baked) { buf.set(b, off); off += b.length; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(buf, 3));
+  return g;
+}
+
+/** Split (1 part -> components) or Merge (many parts -> 1). Models load whole; splitting is opt-in. */
+async function splitOrMerge() {
+  const soup = bakeCurrentToSoup();
+  if (!soup) { ui.showToast('Nothing to split yet'); return; }
+  if (doc.count() > 1) {
+    installParts([{ name: modelName, geometry: soup }]);
+    ui.showToast('Merged back to one piece');
+  } else {
+    ui.showToast('Splitting into parts…');
+    await installSplit(soup, modelName);
+    const n = doc.count();
+    ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
+  }
+}
 
 function duplicateSelected() {
   const sel = doc.selectedId; if (!sel) return;
@@ -67,17 +117,41 @@ async function doExport(kind: 'glb' | 'stl' | '3mf') {
 
 async function loadFile(file: File) {
   ui.showToast(`Opening ${file.name}…`);
-  const { parts, needsSplit } = await parseFile(file);
+  const { parts } = await parseFile(file);
   if (parts.length === 0) throw new Error('no meshes found in file');
-  if (needsSplit && parts.length === 1) {
-    await installSplit(parts[0].geometry, parts[0].name);
-  } else {
+  modelName = file.name.replace(/\.[^.]+$/, '') || 'model';
+  // Real files ALWAYS load as one piece — splitting is the user's call (Split button).
+  if (parts.length === 1) {
+    parts[0].name = modelName;
     installParts(parts);
+    return;
   }
+  const v = new THREE.Vector3();
+  let total = 0;
+  for (const p of parts) {
+    const idx = p.geometry.getIndex();
+    total += idx ? idx.count : p.geometry.getAttribute('position').count;
+  }
+  const buf = new Float32Array(total * 3);
+  let off = 0;
+  for (const p of parts) {
+    const pos = p.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const idx = p.geometry.getIndex();
+    const n = idx ? idx.count : pos.count;
+    for (let i = 0; i < n; i++) {
+      v.fromBufferAttribute(pos, idx ? idx.getX(i) : i);
+      buf[off++] = v.x; buf[off++] = v.y; buf[off++] = v.z;
+    }
+    p.geometry.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(buf, 3));
+  installParts([{ name: modelName, geometry: g }]);
 }
 
 async function loadDemo() {
   ui.showToast('Building demo…');
+  modelName = 'demo';
   await installSplit(demoSoup(), 'demo');
 }
 
@@ -112,6 +186,13 @@ function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[])
     t.position = [c.x, c.y, c.z];
     metas.push({ id, name: p.name, triCount, visible: true, color: PALETTE[metas.length % PALETTE.length], transform: t });
   }
+  // Ground the model: rest its lowest point on the grid (y = 0).
+  let minY = Infinity;
+  for (let i = 0; i < parts.length; i++) {
+    const bb = parts[i].geometry.boundingBox!;
+    minY = Math.min(minY, metas[i].transform.position[1] + bb.min.y);
+  }
+  if (Number.isFinite(minY) && minY !== 0) for (const m of metas) m.transform.position[1] -= minY;
   doc.addParts(metas);
   viewport.fitCamera();
 }

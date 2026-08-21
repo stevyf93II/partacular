@@ -8,6 +8,7 @@ export interface UIHooks {
   onRecolor: () => void;
   onExport: (kind: 'glb' | 'stl' | '3mf') => void;
   onFit: () => void;
+  onSplitToggle: () => void;
 }
 
 export function initUI(doc: Document, hooks: UIHooks) {
@@ -33,6 +34,7 @@ export function initUI(doc: Document, hooks: UIHooks) {
   $('pillcopy').addEventListener('click', () => hooks.onDuplicate());
   $('pillcolor').addEventListener('click', () => hooks.onRecolor());
   $('fitbtn').addEventListener('click', () => hooks.onFit());
+  $('splitbtn').addEventListener('click', () => hooks.onSplitToggle());
   const sheet = $('sheet');
   $('savebtn').addEventListener('click', () => sheet.classList.add('show'));
   $('sheetcancel').addEventListener('click', () => sheet.classList.remove('show'));
@@ -52,6 +54,9 @@ export function initUI(doc: Document, hooks: UIHooks) {
   function refresh() {
     const n = doc.count();
     partcount.textContent = n === 0 ? 'no model' : `${n} part${n === 1 ? '' : 's'}`;
+    const splitBtn = $('splitbtn') as HTMLButtonElement;
+    splitBtn.style.display = n === 0 ? 'none' : 'inline-block';
+    splitBtn.textContent = n > 1 ? 'Merge' : 'Split';
     undoBtn.classList.toggle('show', doc.canUndo());
     const sel = doc.selectedId;
     if (sel) {
