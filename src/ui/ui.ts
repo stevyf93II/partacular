@@ -43,6 +43,44 @@ export function initUI(doc: Document, hooks: UIHooks) {
   $('exportstl').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('stl'); });
   $('export3mf').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('3mf'); });
   $('pillhide').addEventListener('click', () => { if (doc.selectedId) doc.setVisible(doc.selectedId, false); });
+
+  // ---- per-axis resize: Size button toggles three log-scale sliders (0.1x-10x).
+  // Each slider stroke is one undo step (beginTransform on grab, endTransform on release).
+  const sizerow = $('sizerow');
+  let sizeOpen = false;
+  const sliders = [
+    { input: $('scalex') as HTMLInputElement, out: $('scalexv'), axis: 0 },
+    { input: $('scaley') as HTMLInputElement, out: $('scaleyv'), axis: 1 },
+    { input: $('scalez') as HTMLInputElement, out: $('scalezv'), axis: 2 },
+  ];
+  const toScale = (v: number) => Math.pow(10, (v - 50) / 50);        // 0..100 -> 0.1x..10x
+  const toSlider = (sc: number) => Math.max(0, Math.min(100, 50 + 50 * Math.log10(sc)));
+  function syncSliders() {
+    const sel = doc.selectedId; if (!sel) return;
+    const m = doc.get(sel); if (!m) return;
+    for (const s of sliders) {
+      s.input.value = String(toSlider(m.transform.scale[s.axis]));
+      s.out.textContent = m.transform.scale[s.axis].toFixed(2) + '×';
+    }
+  }
+  function setSizeOpen(open: boolean) {
+    sizeOpen = open && doc.selectedId !== null;
+    sizerow.style.display = sizeOpen ? 'flex' : 'none';
+    if (sizeOpen) syncSliders();
+  }
+  $('pillsize').addEventListener('click', () => setSizeOpen(!sizeOpen));
+  for (const s of sliders) {
+    s.input.addEventListener('pointerdown', () => { if (doc.selectedId) doc.beginTransform(doc.selectedId); });
+    s.input.addEventListener('input', () => {
+      const sel = doc.selectedId; if (!sel) return;
+      const m = doc.get(sel); if (!m) return;
+      const scale = [...m.transform.scale] as [number, number, number];
+      scale[s.axis] = toScale(Number(s.input.value));
+      doc.updateTransform(sel, { scale });
+      s.out.textContent = scale[s.axis].toFixed(2) + '×';
+    });
+    s.input.addEventListener('change', () => doc.endTransform());
+  }
   undoBtn.addEventListener('click', () => { const name = doc.undo(); if (name) showToast(`Restored ${name}`); refresh(); });
 
   let toastTimer = 0;
@@ -65,11 +103,12 @@ export function initUI(doc: Document, hooks: UIHooks) {
       ($('pillcolor') as HTMLButtonElement).style.background = '#' + (meta?.color ?? 0x4da3ff).toString(16).padStart(6, '0');
       pill.classList.add('show');
     }
-    else pill.classList.remove('show');
+    else { pill.classList.remove('show'); setSizeOpen(false); }
   }
 
   doc.on(e => {
-    if (e.type === 'part-transform') { refresh(); return; }
+    if (e.type === 'part-transform') { refresh(); if (sizeOpen) syncSliders(); return; }
+    if (e.type === 'selection' && sizeOpen) syncSliders();
     refresh();
     if (e.type === 'parts-added' && drop.classList.contains('hidden') === false && doc.count() > 0) drop.classList.add('hidden');
     if (e.type === 'part-removed') showToast('Part deleted — Undo is top right');
