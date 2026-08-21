@@ -21,6 +21,7 @@ const ui = initUI(doc, {
   onDuplicate: () => duplicateSelected(),
   onRecolor: () => recolorSelected(),
   onExport: kind => doExport(kind).catch(err => ui.showToast(`Export failed: ${err.message ?? err}`)),
+  onFit: () => viewport.fitCamera(),
 });
 
 function duplicateSelected() {
