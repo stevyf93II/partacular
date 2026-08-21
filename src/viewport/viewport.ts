@@ -37,7 +37,7 @@ export class Viewport {
   private dragStartHit = new THREE.Vector3();
   private dragStartPos: [number, number, number] = [0, 0, 0];
   private pinchStartDist = 1; private pinchStartAngle = 0;
-  private pinchStartScale = 1; private pinchStartRotY = 0;
+  private pinchStartScale: [number, number, number] = [1, 1, 1]; private pinchStartRotY = 0;
 
   constructor(container: HTMLElement, private doc: Document) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -174,7 +174,7 @@ export class Viewport {
       this.pinchStartDist = Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1);
       this.pinchStartAngle = Math.atan2(b.y - a.y, b.x - a.x);
       const m = this.doc.get(this.doc.selectedId!)!;
-      this.pinchStartScale = m.transform.scale;
+      this.pinchStartScale = [...m.transform.scale];
       this.pinchStartRotY = m.transform.rotationY;
     }
   }
@@ -195,7 +195,8 @@ export class Viewport {
       const [a, b] = [...this.pointers.values()];
       const dist = Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1);
       const angle = Math.atan2(b.y - a.y, b.x - a.x);
-      const scale = THREE.MathUtils.clamp(this.pinchStartScale * (dist / this.pinchStartDist), 0.05, 50);
+      const f = dist / this.pinchStartDist; // uniform pinch preserves axis ratios
+      const scale = this.pinchStartScale.map(v => THREE.MathUtils.clamp(v * f, 0.05, 50)) as [number, number, number];
       const rotY = this.pinchStartRotY - (angle - this.pinchStartAngle); // screen twist -> Y spin
       this.doc.updateTransform(sel, { scale, rotationY: rotY });
       this.moved = true;
@@ -238,7 +239,8 @@ export class Viewport {
     const m = this.doc.get(sel)!;
     this.doc.beginTransform(sel);
     const factor = Math.exp(-e.deltaY * 0.001);
-    this.doc.updateTransform(sel, { scale: THREE.MathUtils.clamp(m.transform.scale * factor, 0.05, 50) });
+    const scale = m.transform.scale.map(v => THREE.MathUtils.clamp(v * factor, 0.05, 50)) as [number, number, number];
+    this.doc.updateTransform(sel, { scale });
     this.doc.endTransform();
   }
 
@@ -286,7 +288,7 @@ export class Viewport {
       const m = this.doc.get(id); if (!m) continue;
       const geo = v.mesh.geometry as THREE.BufferGeometry;
       if (!geo.boundingSphere) geo.computeBoundingSphere();
-      const r = (geo.boundingSphere?.radius ?? 0.1) * m.transform.scale;
+      const r = (geo.boundingSphere?.radius ?? 0.1) * Math.max(...m.transform.scale);
       const p = new THREE.Vector3(...m.transform.position);
       box.expandByPoint(p.clone().addScalar(r));
       box.expandByPoint(p.clone().addScalar(-r));
@@ -333,7 +335,7 @@ export class Viewport {
     const k = this.doc.explodeFactor;
     v.mesh.position.set(...m.transform.position).addScaledVector(v.explodeDir, k * 1.1);
     v.mesh.rotation.set(0, m.transform.rotationY, 0);
-    v.mesh.scale.setScalar(m.transform.scale);
+    v.mesh.scale.set(...m.transform.scale);
   }
 
   private applyAll() { for (const id of this.visuals.keys()) this.applyOne(id); }
