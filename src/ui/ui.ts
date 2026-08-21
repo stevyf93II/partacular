@@ -7,6 +7,7 @@ export interface UIHooks {
   onDuplicate: () => void;
   onRecolor: () => void;
   onExport: (kind: 'glb' | 'stl') => void;
+  onFit: () => void;
 }
 
 export function initUI(doc: Document, hooks: UIHooks) {
@@ -31,6 +32,7 @@ export function initUI(doc: Document, hooks: UIHooks) {
   $('pillrot').addEventListener('click', () => hooks.onRotate());
   $('pillcopy').addEventListener('click', () => hooks.onDuplicate());
   $('pillcolor').addEventListener('click', () => hooks.onRecolor());
+  $('fitbtn').addEventListener('click', () => hooks.onFit());
   const sheet = $('sheet');
   $('savebtn').addEventListener('click', () => sheet.classList.add('show'));
   $('sheetcancel').addEventListener('click', () => sheet.classList.remove('show'));
