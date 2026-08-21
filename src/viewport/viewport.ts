@@ -246,9 +246,21 @@ export class Viewport {
   }
 
   refreshModelBounds(fit = false) {
+    // Bounds come from the DOCUMENT (un-exploded positions + geometry spheres).
+    // Never measure exploded meshes: that fed explode offsets back into the
+    // explode directions and amplified them every gesture (runaway scatter bug).
     const box = new THREE.Box3();
     let any = false;
-    for (const v of this.visuals.values()) { box.expandByObject(v.mesh); any = true; }
+    for (const [id, v] of this.visuals) {
+      const m = this.doc.get(id); if (!m) continue;
+      const geo = v.mesh.geometry as THREE.BufferGeometry;
+      if (!geo.boundingSphere) geo.computeBoundingSphere();
+      const r = (geo.boundingSphere?.radius ?? 0.1) * m.transform.scale;
+      const p = new THREE.Vector3(...m.transform.position);
+      box.expandByPoint(p.clone().addScalar(r));
+      box.expandByPoint(p.clone().addScalar(-r));
+      any = true;
+    }
     if (!any) return;
     box.getCenter(this.modelCenter);
     this.modelRadius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.001);
@@ -261,8 +273,11 @@ export class Viewport {
       this.controls.target.copy(this.modelCenter);
       const d = this.modelRadius * 2.2;
       this.camera.position.copy(this.modelCenter).add(new THREE.Vector3(d, d * 0.7, d));
-      this.camera.near = this.modelRadius / 100; this.camera.far = this.modelRadius * 100;
+      this.camera.near = this.modelRadius / 200; this.camera.far = this.modelRadius * 200;
       this.camera.updateProjectionMatrix();
+      // Leash the camera so pinch-zoom can never run away to infinity.
+      this.controls.minDistance = this.modelRadius * 0.15;
+      this.controls.maxDistance = this.modelRadius * 8;
     }
   }
 
