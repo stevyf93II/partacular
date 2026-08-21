@@ -16,6 +16,8 @@ export interface SegmentOptions {
   minRegionFrac?: number;
   /** decimation target for the analysis proxy */
   proxyTris?: number;
+  /** region boundaries with mean concave angle below this merge away (degrees) */
+  mergeStopDeg?: number;
 }
 
 /** Segment a triangle soup; returns per-triangle group labels (0..groupCount-1). */
@@ -98,6 +100,19 @@ export function watershedSegment(
     }
   }
 
+  // per-edge concave angle (0 for convex/flat) — reused for boundary-strength merging
+  const edgeConc = new Float32Array(edgeInfo.length);
+  for (let i = 0; i < edgeInfo.length; i++) {
+    const [f1, f2, a0, a1] = edgeInfo[i];
+    const dot = Math.min(1, Math.max(-1, sn[f1 * 3] * sn[f2 * 3] + sn[f1 * 3 + 1] * sn[f2 * 3 + 1] + sn[f1 * 3 + 2] * sn[f2 * 3 + 2]));
+    const ang = Math.acos(dot);
+    const ex = wp[a1 * 3] - wp[a0 * 3], ey = wp[a1 * 3 + 1] - wp[a0 * 3 + 1], ez = wp[a1 * 3 + 2] - wp[a0 * 3 + 2];
+    const cx = sn[f1 * 3 + 1] * sn[f2 * 3 + 2] - sn[f1 * 3 + 2] * sn[f2 * 3 + 1];
+    const cy = sn[f1 * 3 + 2] * sn[f2 * 3] - sn[f1 * 3] * sn[f2 * 3 + 2];
+    const cz = sn[f1 * 3] * sn[f2 * 3 + 1] - sn[f1 * 3 + 1] * sn[f2 * 3];
+    edgeConc[i] = (cx * ex + cy * ey + cz * ez < 0) ? ang : 0;
+  }
+
   // ---- watershed flood with persistence merging ----
   const order = [...Array(nTri).keys()].sort((a, b) => curv[a] - curv[b]);
   const label = new Int32Array(nTri).fill(-1);
@@ -165,6 +180,74 @@ export function watershedSegment(
     }
   }
 
+  // ---- boundary-strength merging: only sharp CONCAVE grooves justify a part
+  // boundary. Region pairs whose shared boundary is convex or gentle merge —
+  // this glues a panel's inner+outer skins (convex rim) and arbitrary patch
+  // borders back together, leaving semantic parts (door, hood, body). ----
+  {
+    const stopRad = ((opts.mergeStopDeg ?? 13) * Math.PI) / 180;
+    for (let iter = 0; iter < 200; iter++) {
+      const bSum = new Map<string, number>(), bCnt = new Map<string, number>();
+      for (let i = 0; i < edgeInfo.length; i++) {
+        const l1 = label[edgeInfo[i][0]], l2 = label[edgeInfo[i][1]];
+        if (l1 === l2) continue;
+        const key = l1 < l2 ? l1 + ':' + l2 : l2 + ':' + l1;
+        bSum.set(key, (bSum.get(key) || 0) + edgeConc[i]);
+        bCnt.set(key, (bCnt.get(key) || 0) + 1);
+      }
+      let bestKey = ''; let bestMean = Infinity;
+      for (const [key, cnt] of bCnt) {
+        const mean = (bSum.get(key) || 0) / cnt;
+        if (mean < bestMean) { bestMean = mean; bestKey = key; }
+      }
+      if (!bestKey || bestMean >= stopRad) break;
+      const [ra, rb] = bestKey.split(':').map(Number);
+      for (let k = 0; k < nTri; k++) if (label[k] === rb) label[k] = ra;
+    }
+  }
+
+  // ---- thinness filter: strip/lattice regions (groove trim lines) have huge
+  // boundary relative to area — they're not parts. A disk of N faces has
+  // boundary ~ 3.5*sqrt(N); strips blow far past that. Absorb into the
+  // neighbor with the longest shared boundary. ----
+  for (let round = 0; round < 4; round++) {
+    const area = new Map<number, number>();
+    for (let k = 0; k < nTri; k++) area.set(label[k], (area.get(label[k]) || 0) + 1);
+    const bTotal = new Map<number, number>();
+    const bPair = new Map<string, number>();
+    for (let i = 0; i < edgeInfo.length; i++) {
+      const l1 = label[edgeInfo[i][0]], l2 = label[edgeInfo[i][1]];
+      if (l1 === l2) continue;
+      bTotal.set(l1, (bTotal.get(l1) || 0) + 1);
+      bTotal.set(l2, (bTotal.get(l2) || 0) + 1);
+      const key = l1 < l2 ? l1 + ':' + l2 : l2 + ':' + l1;
+      bPair.set(key, (bPair.get(key) || 0) + 1);
+    }
+    const thin = new Set<number>();
+    for (const [id, a] of area) {
+      const b = bTotal.get(id) || 0;
+      if (b > 8 * Math.sqrt(a)) thin.add(id);
+    }
+    if (thin.size === 0) break;
+    // each thin region merges into the neighbor sharing the longest boundary
+    const target = new Map<number, [number, number]>();
+    for (const [key, cnt] of bPair) {
+      const [ra, rb] = key.split(':').map(Number);
+      if (thin.has(ra) && !thin.has(rb)) { const c = target.get(ra); if (!c || cnt > c[1]) target.set(ra, [rb, cnt]); }
+      if (thin.has(rb) && !thin.has(ra)) { const c = target.get(rb); if (!c || cnt > c[1]) target.set(rb, [ra, cnt]); }
+      // thin-to-thin allowed as fallback so chains still collapse
+      if (thin.has(ra) && thin.has(rb)) {
+        const ca = target.get(ra); if (!ca) target.set(ra, [rb, 0]);
+        const cb = target.get(rb); if (!cb) target.set(rb, [ra, 0]);
+      }
+    }
+    if (target.size === 0) break;
+    for (let k = 0; k < nTri; k++) {
+      const t = target.get(label[k]);
+      if (t) label[k] = t[0];
+    }
+  }
+
   // ---- compact label ids ----
   const remap = new Map<number, number>();
   for (let k = 0; k < nTri; k++) if (!remap.has(label[k])) remap.set(label[k], remap.size);
@@ -197,11 +280,19 @@ export function watershedSegment(
     const x = (soup[k * 9] + soup[k * 9 + 3] + soup[k * 9 + 6]) / 3;
     const y = (soup[k * 9 + 1] + soup[k * 9 + 4] + soup[k * 9 + 7]) / 3;
     const z = (soup[k * 9 + 2] + soup[k * 9 + 5] + soup[k * 9 + 8]) / 3;
+    // face normal of the full-res triangle: thin double-layer panels (roof skin
+    // vs headliner) are millimeters apart with OPPOSITE normals — nearest-centroid
+    // alone flip-flops between layers and shreds the labels. Require same-facing.
+    const ux = soup[k * 9 + 3] - soup[k * 9], uy = soup[k * 9 + 4] - soup[k * 9 + 1], uz = soup[k * 9 + 5] - soup[k * 9 + 2];
+    const vx = soup[k * 9 + 6] - soup[k * 9], vy = soup[k * 9 + 7] - soup[k * 9 + 1], vz = soup[k * 9 + 8] - soup[k * 9 + 2];
+    let fnx = uy * vz - uz * vy, fny = uz * vx - ux * vz, fnz = ux * vy - uy * vx;
+    const fl = Math.hypot(fnx, fny, fnz) || 1;
+    fnx /= fl; fny /= fl; fnz /= fl;
     const cxg = gx(x), cyg = gy(y), czg = gz(z);
     let best = -1, bestD = Infinity;
-    // ring search: expand until a cell with candidates is found
+    let bestAny = -1, bestAnyD = Infinity; // fallback if nothing same-facing nearby
     let found = false;
-    for (let ring = 0; ring < G && !found; ring++) {
+    for (let ring = 0; ring < G; ring++) {
       for (let dx = -ring; dx <= ring; dx++) for (let dy = -ring; dy <= ring; dy++) for (let dz = -ring; dz <= ring; dz++) {
         if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== ring) continue;
         const xx = cxg + dx, yy = cyg + dy, zz = czg + dz;
@@ -210,13 +301,18 @@ export function watershedSegment(
         if (!cell) continue;
         for (const p of cell) {
           const d = (cent[p * 3] - x) ** 2 + (cent[p * 3 + 1] - y) ** 2 + (cent[p * 3 + 2] - z) ** 2;
-          if (d < bestD) { bestD = d; best = p; }
+          if (d < bestAnyD) { bestAnyD = d; bestAny = p; }
+          if (d < bestD && fn[p * 3] * fnx + fn[p * 3 + 1] * fny + fn[p * 3 + 2] * fnz > 0.2) { bestD = d; best = p; }
         }
         found = true;
       }
-      if (found && ring > 0) break; // one extra ring after first hit is enough at this density
+      if (found) {
+        if (best >= 0) break;
+        if (ring > 2) break; // searched a few extra rings for a same-facing match
+      }
     }
-    triGroup[k] = best >= 0 ? remap.get(label[best])! : 0;
+    const pick = best >= 0 ? best : bestAny;
+    triGroup[k] = pick >= 0 ? remap.get(label[pick])! : 0;
   }
 
   // ---- majority-vote smoothing at full res: the nearest-centroid transfer
@@ -252,6 +348,58 @@ export function watershedSegment(
         else if (ls.length === 3 && ls[1] !== l0 && ls[1] === ls[2]) next[k] = ls[1];
       }
       triGroup.set(next);
+    }
+
+    // ---- island absorption: majority voting can't fix multi-face islands
+    // (label speckle/holes inside another part). Within each label, only the
+    // largest connected patch keeps it; every smaller island adopts the
+    // dominant label around its border. Two rounds. ----
+    for (let round = 0; round < 2; round++) {
+      const compId = new Int32Array(fullTris).fill(-1);
+      const compLabel: number[] = []; const compSize: number[] = [];
+      const stack = new Int32Array(fullTris);
+      for (let seed = 0; seed < fullTris; seed++) {
+        if (compId[seed] !== -1) continue;
+        const cid = compLabel.length;
+        compLabel.push(triGroup[seed]); compSize.push(0);
+        let sp = 0; stack[sp++] = seed; compId[seed] = cid;
+        while (sp > 0) {
+          const f = stack[--sp]; compSize[cid]++;
+          for (let e = 0; e < nbCount[f]; e++) {
+            const g = nb[f * 3 + e];
+            if (compId[g] === -1 && triGroup[g] === triGroup[seed]) { compId[g] = cid; stack[sp++] = g; }
+          }
+        }
+      }
+      const largestOfLabel = new Map<number, number>();
+      for (let c = 0; c < compSize.length; c++) {
+        const cur = largestOfLabel.get(compLabel[c]);
+        if (cur === undefined || compSize[c] > compSize[cur]) largestOfLabel.set(compLabel[c], c);
+      }
+      // vote per island over border neighbors
+      const votes = new Map<number, Map<number, number>>();
+      for (let k = 0; k < fullTris; k++) {
+        const c = compId[k];
+        if (largestOfLabel.get(triGroup[k]) === c) continue;
+        for (let e = 0; e < nbCount[k]; e++) {
+          const g = nb[k * 3 + e];
+          if (compId[g] === c) continue;
+          let m = votes.get(c);
+          if (!m) { m = new Map(); votes.set(c, m); }
+          m.set(triGroup[g], (m.get(triGroup[g]) || 0) + 1);
+        }
+      }
+      const newLabel = new Map<number, number>();
+      for (const [c, m] of votes) {
+        let bl = -1, bc = -1;
+        for (const [l, cnt] of m) if (cnt > bc) { bc = cnt; bl = l; }
+        if (bl >= 0) newLabel.set(c, bl);
+      }
+      if (newLabel.size === 0) break;
+      for (let k = 0; k < fullTris; k++) {
+        const nl = newLabel.get(compId[k]);
+        if (nl !== undefined) triGroup[k] = nl;
+      }
     }
   }
   return { triGroup, groupCount };
