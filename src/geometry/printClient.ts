@@ -40,7 +40,7 @@ function worldPositions(geo: THREE.BufferGeometry, m: THREE.Matrix4): Float32Arr
 }
 
 /** Merge all visible parts to a watertight solid and pack as 3MF (runs in a worker). */
-export function export3MFInWorker(doc: Document): Promise<PrintResult> {
+export function export3MFInWorker(doc: Document, provenance: string): Promise<PrintResult> {
   const w = ensureWorker();
   const jobId = ++jobSeq;
   const parts: { name: string; positions: Float32Array }[] = [];
@@ -62,6 +62,6 @@ export function export3MFInWorker(doc: Document): Promise<PrintResult> {
   if (parts.length === 0) return Promise.reject(new Error('no visible parts'));
   return new Promise((resolve, reject) => {
     pending.set(jobId, { resolve, reject });
-    w.postMessage({ jobId, parts }, transfers);
+    w.postMessage({ jobId, parts, provenance }, transfers);
   });
 }

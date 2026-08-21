@@ -20,17 +20,23 @@ function buildExportScene(doc: Document): THREE.Scene {
   return scene;
 }
 
-export async function exportGLB(doc: Document): Promise<Blob> {
+export async function exportGLB(doc: Document, provenance: string): Promise<Blob> {
   const scene = buildExportScene(doc);
+  // self-describing artifact: effective config rides along as glTF extras
+  scene.userData = { partacular: provenance };
   const result = await new GLTFExporter().parseAsync(scene, { binary: true });
   return new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' });
 }
 
-export function exportSTL(doc: Document): Blob {
+export function exportSTL(doc: Document, provenance: string): Blob {
   const scene = buildExportScene(doc);
   scene.updateMatrixWorld(true);
   const data = new STLExporter().parse(scene, { binary: true }) as unknown as DataView;
-  return new Blob([data.buffer as ArrayBuffer], { type: 'model/stl' });
+  // self-describing artifact: binary STL's 80-byte header carries the config
+  const bytes = new Uint8Array(data.buffer as ArrayBuffer);
+  const header = new TextEncoder().encode(provenance.slice(0, 80));
+  bytes.set(header.subarray(0, 80), 0);
+  return new Blob([bytes.buffer], { type: 'model/stl' });
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

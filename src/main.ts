@@ -7,6 +7,7 @@ import { splitInWorker } from './geometry/splitClient';
 import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
 import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
 import { export3MFInWorker } from './geometry/printClient';
+import { SEGMENTATION_CONFIG } from './geometry/segmentation.config.js';
 
 export const PALETTE = [0x4da3ff, 0xffb347, 0x7ee081, 0xff7eb6, 0xb59bff, 0x6be2e0, 0xffd66b, 0xff8d6b, 0x9fd356, 0x62b6ff];
 
@@ -28,6 +29,16 @@ const ui = initUI(doc, {
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
 });
 let modelName = 'model';
+let lastSplitUsed = false; // whether current parts came from the split pipeline
+
+/** Self-describing artifacts: every export embeds the effective config that produced it. */
+function provenance(): string {
+  return JSON.stringify({
+    app: 'partacular',
+    segmentation: lastSplitUsed ? SEGMENTATION_CONFIG : null,
+    exported: new Date().toISOString(),
+  });
+}
 
 /** All visible parts baked into one world-space soup geometry. */
 function bakeCurrentToSoup(): THREE.BufferGeometry | null {
@@ -72,6 +83,7 @@ async function splitOrMerge() {
   } else {
     ui.showToast('Splitting into parts…');
     await installSplit(soup, modelName);
+    lastSplitUsed = true;
     const n = doc.count();
     ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
   }
@@ -102,7 +114,7 @@ async function doExport(kind: 'glb' | 'stl' | '3mf') {
   if (doc.count() === 0) { ui.showToast('Nothing to save yet'); return; }
   if (kind === '3mf') {
     ui.showToast('Merging parts to a watertight solid…');
-    const res = await export3MFInWorker(doc);
+    const res = await export3MFInWorker(doc, provenance());
     downloadBlob(res.blob, 'partacular.3mf');
     ui.showToast(res.failedNames.length === 0
       ? `Saved partacular.3mf — watertight, ${res.tris} triangles`
@@ -110,7 +122,7 @@ async function doExport(kind: 'glb' | 'stl' | '3mf') {
     return;
   }
   ui.showToast(`Building ${kind.toUpperCase()}…`);
-  const blob = kind === 'glb' ? await exportGLB(doc) : exportSTL(doc);
+  const blob = kind === 'glb' ? await exportGLB(doc, provenance()) : exportSTL(doc, provenance());
   downloadBlob(blob, `partacular.${kind}`);
   ui.showToast(`Saved partacular.${kind}`);
 }

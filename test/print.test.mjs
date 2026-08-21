@@ -28,7 +28,7 @@ const res = buildPrintFile(api, [
   { name: 'cube A', positions: cubeSoup(0, 0, 0) },
   { name: 'cube B', positions: cubeSoup(0.5, 0, 0) },
   { name: 'broken', positions: new Float32Array([0,0,0, 1,0,0, 0,1,0]) },
-]);
+], '{"test":"provenance"}');
 
 check('merged solids', res.merged, 2);
 check('failed names', res.failedNames, ['broken']);
@@ -58,6 +58,7 @@ check('unit is millimeter', xml.includes('unit="millimeter"'), true);
 // Z-up sanity: cube A spans y in three -> z in 3MF; merged object must contain z="0.5"
 check('z-up conversion applied', /z="0\.5"/.test(xml), true);
 check('content types present', readEntry('[Content_Types].xml') !== null, true);
+check('provenance metadata embedded', xml.includes('partacular:config') && xml.includes('&quot;test&quot;'), true);
 
 console.log(fail === 0 ? 'ALL PASS' : `${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);
