@@ -4,6 +4,9 @@ export interface UIHooks {
   onFile: (f: File) => void;
   onDemo: () => void;
   onRotate: () => void;
+  onDuplicate: () => void;
+  onRecolor: () => void;
+  onExport: (kind: 'glb' | 'stl') => void;
 }
 
 export function initUI(doc: Document, hooks: UIHooks) {
@@ -26,6 +29,14 @@ export function initUI(doc: Document, hooks: UIHooks) {
 
   $('pilldel').addEventListener('click', () => { if (doc.selectedId) doc.deletePart(doc.selectedId); });
   $('pillrot').addEventListener('click', () => hooks.onRotate());
+  $('pillcopy').addEventListener('click', () => hooks.onDuplicate());
+  $('pillcolor').addEventListener('click', () => hooks.onRecolor());
+  const sheet = $('sheet');
+  $('savebtn').addEventListener('click', () => sheet.classList.add('show'));
+  $('sheetcancel').addEventListener('click', () => sheet.classList.remove('show'));
+  sheet.addEventListener('click', e => { if (e.target === sheet) sheet.classList.remove('show'); });
+  $('exportglb').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('glb'); });
+  $('exportstl').addEventListener('click', () => { sheet.classList.remove('show'); hooks.onExport('stl'); });
   $('pillhide').addEventListener('click', () => { if (doc.selectedId) doc.setVisible(doc.selectedId, false); });
   undoBtn.addEventListener('click', () => { const name = doc.undo(); if (name) showToast(`Restored ${name}`); refresh(); });
 
@@ -40,7 +51,12 @@ export function initUI(doc: Document, hooks: UIHooks) {
     partcount.textContent = n === 0 ? 'no model' : `${n} part${n === 1 ? '' : 's'}`;
     undoBtn.classList.toggle('show', doc.canUndo());
     const sel = doc.selectedId;
-    if (sel) { pillname.textContent = doc.get(sel)?.name ?? 'part'; pill.classList.add('show'); }
+    if (sel) {
+      const meta = doc.get(sel);
+      pillname.textContent = meta?.name ?? 'part';
+      ($('pillcolor') as HTMLButtonElement).style.background = '#' + (meta?.color ?? 0x4da3ff).toString(16).padStart(6, '0');
+      pill.classList.add('show');
+    }
     else pill.classList.remove('show');
   }
 
