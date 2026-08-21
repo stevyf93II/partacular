@@ -4,7 +4,10 @@ import { Viewport } from './viewport/viewport';
 import { initUI } from './ui/ui';
 import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometry/loaders';
 import { splitInWorker } from './geometry/splitClient';
-import { putGeometry, clearGeometries } from './geometry/store';
+import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
+import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
+
+export const PALETTE = [0x4da3ff, 0xffb347, 0x7ee081, 0xff7eb6, 0xb59bff, 0x6be2e0, 0xffd66b, 0xff8d6b, 0x9fd356, 0x62b6ff];
 
 const doc = new Document();
 const viewport = new Viewport(document.getElementById('app')!, doc);
@@ -15,7 +18,39 @@ const ui = initUI(doc, {
   onFile: f => loadFile(f).catch(err => ui.showToast(`Couldn't open that: ${err.message ?? err}`)),
   onDemo: () => loadDemo().catch(err => ui.showToast(String(err))),
   onRotate: () => viewport.rotateSelected45(),
+  onDuplicate: () => duplicateSelected(),
+  onRecolor: () => recolorSelected(),
+  onExport: kind => doExport(kind).catch(err => ui.showToast(`Export failed: ${err.message ?? err}`)),
 });
+
+function duplicateSelected() {
+  const sel = doc.selectedId; if (!sel) return;
+  const src = doc.get(sel); const geo = getGeometry(sel);
+  if (!src || !geo) return;
+  const id = newId();
+  putGeometry(id, geo); // geometry is shared between copies
+  const t = identityTransform();
+  const offset = Math.max(0.15 * Math.cbrt(src.triCount), 0.2) * src.transform.scale;
+  t.position = [src.transform.position[0] + offset, src.transform.position[1], src.transform.position[2] + offset];
+  t.rotationY = src.transform.rotationY; t.scale = src.transform.scale;
+  doc.addParts([{ id, name: `${src.name} copy`, triCount: src.triCount, visible: true, color: src.color, transform: t }], true);
+  doc.select(id);
+}
+
+function recolorSelected() {
+  const sel = doc.selectedId; if (!sel) return;
+  const m = doc.get(sel); if (!m) return;
+  const i = PALETTE.indexOf(m.color);
+  doc.setColor(sel, PALETTE[(i + 1) % PALETTE.length]);
+}
+
+async function doExport(kind: 'glb' | 'stl') {
+  if (doc.count() === 0) { ui.showToast('Nothing to save yet'); return; }
+  ui.showToast(`Building ${kind.toUpperCase()}…`);
+  const blob = kind === 'glb' ? await exportGLB(doc) : exportSTL(doc);
+  downloadBlob(blob, `partacular.${kind}`);
+  ui.showToast(`Saved partacular.${kind}`);
+}
 
 async function loadFile(file: File) {
   ui.showToast(`Opening ${file.name}…`);
@@ -62,7 +97,7 @@ function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[])
     const triCount = p.geometry.getIndex() ? p.geometry.getIndex()!.count / 3 : posCount / 3;
     const t = identityTransform();
     t.position = [c.x, c.y, c.z];
-    metas.push({ id, name: p.name, triCount, visible: true, transform: t });
+    metas.push({ id, name: p.name, triCount, visible: true, color: PALETTE[metas.length % PALETTE.length], transform: t });
   }
   doc.addParts(metas);
   viewport.fitCamera();

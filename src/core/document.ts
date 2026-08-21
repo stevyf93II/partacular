@@ -12,6 +12,7 @@ export interface PartMeta {
   name: string;
   triCount: number;
   visible: boolean;
+  color: number;
   transform: PartTransform;
 }
 
@@ -24,6 +25,7 @@ export type DocEvent =
   | { type: 'part-removed'; id: string }
   | { type: 'part-visibility'; id: string; visible: boolean }
   | { type: 'part-transform'; id: string }
+  | { type: 'part-color'; id: string; color: number }
   | { type: 'selection'; id: string | null }
   | { type: 'explode'; factor: number };
 
@@ -32,6 +34,8 @@ type Listener = (e: DocEvent) => void;
 type UndoStep =
   | { kind: 'delete'; id: string }
   | { kind: 'hide'; id: string }
+  | { kind: 'add'; id: string }
+  | { kind: 'color'; id: string; before: number }
   | { kind: 'transform'; id: string; before: PartTransform };
 
 export class Document {
@@ -55,9 +59,19 @@ export class Document {
     this.emit({ type: 'reset' });
   }
 
-  addParts(metas: PartMeta[]) {
-    for (const m of metas) { this.parts.set(m.id, m); this.order.push(m.id); }
+  addParts(metas: PartMeta[], recordUndo = false) {
+    for (const m of metas) {
+      this.parts.set(m.id, m); this.order.push(m.id);
+      if (recordUndo) this.undoStack.push({ kind: 'add', id: m.id });
+    }
     this.emit({ type: 'parts-added', ids: metas.map(m => m.id) });
+  }
+
+  setColor(id: string, color: number, recordUndo = true) {
+    const m = this.parts.get(id); if (!m || m.color === color) return;
+    if (recordUndo) this.undoStack.push({ kind: 'color', id, before: m.color });
+    m.color = color;
+    this.emit({ type: 'part-color', id, color });
   }
 
   list(): PartMeta[] { return this.order.filter(id => this.parts.has(id)).map(id => this.parts.get(id)!); }
@@ -125,6 +139,20 @@ export class Document {
     if (step.kind === 'hide') {
       const m = this.parts.get(step.id);
       if (m) { m.visible = true; this.emit({ type: 'part-visibility', id: step.id, visible: true }); }
+      return m ? m.name : null;
+    }
+    if (step.kind === 'add') {
+      const m = this.parts.get(step.id);
+      if (m) {
+        this.parts.delete(step.id);
+        if (this.selectedId === step.id) this.select(null);
+        this.emit({ type: 'part-removed', id: step.id });
+      }
+      return m ? m.name : null;
+    }
+    if (step.kind === 'color') {
+      const m = this.parts.get(step.id);
+      if (m) { m.color = step.before; this.emit({ type: 'part-color', id: step.id, color: step.before }); }
       return m ? m.name : null;
     }
     // transform
