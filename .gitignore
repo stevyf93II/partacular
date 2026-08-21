@@ -3,3 +3,5 @@ dist
 dist-test
 .netlify
 public/icons
+reference/
+.gate-build

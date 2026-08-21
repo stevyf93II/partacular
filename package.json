@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "preview": "node scripts/preview.mjs",
+    "gate": "node scripts/deploy-gate.mjs",
+    "deploy-build": "node scripts/deploy-gate.mjs && vite build"
   },
   "dependencies": {
     "fflate": "0.8.3",

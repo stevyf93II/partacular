@@ -1,0 +1,19 @@
+{
+  "acceptedAt": "2026-08-21T11:01:50.506Z",
+  "model": "reference/diablo.glb",
+  "modelSha256": "32e480d28a1e7565d11d1b6493d19f08d73247dae3a9346af2c9ad41cb11b47e",
+  "params": {
+    "persistDeg": 10,
+    "minRegionFrac": 0.003,
+    "proxyTris": 150000,
+    "mergeStopDeg": 14,
+    "smoothIters": 3,
+    "thinnessFactor": 8,
+    "refineAboveTris": 300000,
+    "maxParts": 100
+  },
+  "fingerprint": {
+    "partCount": 25,
+    "hash": "3f34865dabf90751c1addff868cb727d04add25697f95e6e1f78306d70745409"
+  }
+}
