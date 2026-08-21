@@ -4,7 +4,8 @@
 export interface PartTransform {
   position: [number, number, number];
   rotationY: number;
-  scale: number;
+  /** per-axis scale [x, y, z]; uniform gestures multiply all three */
+  scale: [number, number, number];
 }
 
 export interface PartMeta {
@@ -16,8 +17,8 @@ export interface PartMeta {
   transform: PartTransform;
 }
 
-export const identityTransform = (): PartTransform => ({ position: [0, 0, 0], rotationY: 0, scale: 1 });
-const cloneT = (t: PartTransform): PartTransform => ({ position: [...t.position], rotationY: t.rotationY, scale: t.scale });
+export const identityTransform = (): PartTransform => ({ position: [0, 0, 0], rotationY: 0, scale: [1, 1, 1] });
+const cloneT = (t: PartTransform): PartTransform => ({ position: [...t.position], rotationY: t.rotationY, scale: [...t.scale] });
 
 export type DocEvent =
   | { type: 'reset' }
@@ -111,7 +112,7 @@ export class Document {
     const m = this.parts.get(id); if (!m) return;
     if (t.position) m.transform.position = [...t.position];
     if (t.rotationY !== undefined) m.transform.rotationY = t.rotationY;
-    if (t.scale !== undefined) m.transform.scale = t.scale;
+    if (t.scale !== undefined) m.transform.scale = [...t.scale];
     this.emit({ type: 'part-transform', id });
   }
 
@@ -120,7 +121,8 @@ export class Document {
     const m = this.parts.get(this.transformId);
     if (m) {
       const b = this.transformBefore, a = m.transform;
-      const changed = b.rotationY !== a.rotationY || b.scale !== a.scale ||
+      const changed = b.rotationY !== a.rotationY ||
+        b.scale[0] !== a.scale[0] || b.scale[1] !== a.scale[1] || b.scale[2] !== a.scale[2] ||
         b.position[0] !== a.position[0] || b.position[1] !== a.position[1] || b.position[2] !== a.position[2];
       if (changed) this.undoStack.push({ kind: 'transform', id: this.transformId, before: this.transformBefore });
     }

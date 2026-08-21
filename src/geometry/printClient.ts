@@ -53,7 +53,7 @@ export function export3MFInWorker(doc: Document): Promise<PrintResult> {
     const m = new THREE.Matrix4().compose(
       new THREE.Vector3(...t.position),
       q.setFromAxisAngle(y, t.rotationY),
-      new THREE.Vector3(t.scale, t.scale, t.scale),
+      new THREE.Vector3(...t.scale),
     );
     const positions = worldPositions(geo, m);
     parts.push({ name: meta.name, positions });

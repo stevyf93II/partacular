@@ -13,7 +13,7 @@ function buildExportScene(doc: Document): THREE.Scene {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: m.color }));
     mesh.position.set(...m.transform.position);
     mesh.rotation.set(0, m.transform.rotationY, 0);
-    mesh.scale.setScalar(m.transform.scale);
+    mesh.scale.set(...m.transform.scale);
     mesh.name = m.name;
     scene.add(mesh);
   }
