@@ -64,6 +64,12 @@ export class Viewport {
     el.addEventListener('pointerup', e => this.onPointerUp(e), true);
     el.addEventListener('pointercancel', e => this.onPointerUp(e), true);
     el.addEventListener('wheel', e => this.onWheel(e), { capture: true, passive: false });
+    // Safety nets: a finger-up that escapes the canvas, or the app losing focus,
+    // must never leave a phantom pointer behind (stale pointers = dead touch UI).
+    window.addEventListener('pointerup', e => this.onPointerUp(e));
+    window.addEventListener('pointercancel', e => this.onPointerUp(e));
+    window.addEventListener('blur', () => this.resetGestures());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.resetGestures(); });
 
     doc.on(e => {
       if (e.type === 'reset') this.clearVisuals();
@@ -101,7 +107,15 @@ export class Viewport {
     return this.raycaster.ray.intersectPlane(this.dragPlane, out) !== null;
   }
 
+  private resetGestures() {
+    this.pointers.clear();
+    if (this.mode === 'move' || this.mode === 'pinch') this.doc.endTransform();
+    this.mode = 'none';
+    this.controls.enabled = true;
+  }
+
   private onPointerDown(e: PointerEvent) {
+    try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pointers.size === 1) {
       this.downX = e.clientX; this.downY = e.clientY; this.downT = performance.now(); this.moved = false;
@@ -159,6 +173,7 @@ export class Viewport {
   }
 
   private onPointerUp(e: PointerEvent) {
+    if (!this.pointers.has(e.pointerId)) return; // already handled (canvas + window both listen)
     this.pointers.delete(e.pointerId);
     if (this.pointers.size > 0) {
       // dropped one finger of a pinch: fall back to move with remaining finger re-anchored
