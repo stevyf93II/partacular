@@ -146,6 +146,8 @@ async function loadFile(file: File) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(buf, 3));
+  ui.showToast('Preparing model…');
+  await new Promise(r => setTimeout(r, 30)); // let the toast paint before the BVH build blocks
   installParts([{ name: modelName, geometry: g }]);
 }
 

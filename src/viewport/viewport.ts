@@ -1,7 +1,15 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { Document } from '../core/document';
 import { getGeometry } from '../geometry/store';
+
+// BVH-accelerated raycasting: without this, every tap tests every triangle —
+// a 2M-tri AI scan made selection take hundreds of ms per pointer event
+// (reads as \"touch is dead\"). With a bounds tree it's sub-millisecond.
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 interface PartVisual { mesh: THREE.Mesh; baseCenter: THREE.Vector3; explodeDir: THREE.Vector3; }
 
@@ -12,7 +20,7 @@ export class Viewport {
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
-  private raycaster = new THREE.Raycaster();
+  private raycaster = (() => { const r = new THREE.Raycaster(); r.firstHitOnly = true; return r; })();
   private visuals = new Map<string, PartVisual>();
   private modelCenter = new THREE.Vector3();
   private grid!: THREE.GridHelper;
@@ -253,6 +261,7 @@ export class Viewport {
     const geo = getGeometry(id); if (!geo) return;
     const color = this.doc.get(id)?.color ?? 0x4da3ff;
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.1, transparent: true, opacity: 1 });
+    if (!geo.boundsTree) geo.computeBoundsTree();
     const mesh = new THREE.Mesh(geo, mat);
     mesh.userData.partId = id;
     if (!geo.boundingBox) geo.computeBoundingBox();
