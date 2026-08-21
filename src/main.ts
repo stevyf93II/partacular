@@ -11,6 +11,8 @@ export const PALETTE = [0x4da3ff, 0xffb347, 0x7ee081, 0xff7eb6, 0xb59bff, 0x6be2
 
 const doc = new Document();
 const viewport = new Viewport(document.getElementById('app')!, doc);
+// Debug/automation handle — lets tests drive the real app from the console.
+(window as unknown as Record<string, unknown>).__partacular = { doc, viewport };
 let idSeq = 0;
 const newId = () => `p${++idSeq}`;
 
