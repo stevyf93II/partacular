@@ -33,11 +33,9 @@
     border-radius:14px; padding:10px 14px; }
   .explode-row label { font-size:12px; color:var(--dim); font-weight:700; letter-spacing:.08em; }
   input[type=range] { flex:1; accent-color:var(--accent); height:28px; }
-  #pill { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 92px);
-    display:none; align-items:center; gap:8px; background:var(--panel2); border:1px solid #313a4d;
-    border-radius:999px; padding:8px 10px 8px 16px; z-index:11; box-shadow:0 8px 30px rgba(0,0,0,.5); }
+  #pill { display:none; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
   #pill.show { display:flex; }
-  #pill { flex-wrap:wrap; justify-content:center; max-width:94vw; }
+  #pill .pname { flex:1; text-align:left; }
   #pillcolor { width:30px; height:30px; border-radius:999px; border:2px solid #fff3 !important; padding:0 !important; background:#4da3ff; }
   #sheet { position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; z-index:40;
     background:rgba(0,0,0,.55); }
@@ -45,7 +43,7 @@
   .sheet-card { background:var(--panel2); border:1px solid #313a4d; border-radius:20px 20px 0 0; width:100%;
     max-width:480px; padding:18px 18px calc(env(safe-area-inset-bottom) + 18px); display:flex; flex-direction:column; gap:10px; }
   .sheet-title { font-size:14px; font-weight:800; letter-spacing:.08em; color:var(--dim); text-align:center; margin-bottom:4px; }
-  #pill .pname { font-size:13px; font-weight:700; max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #pill .pname { font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; }
   #pill button { border:none; border-radius:999px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; }
   #pill .hide { background:#2a3140; color:var(--text); }
   #pill .del { background:var(--danger); color:#fff; }
@@ -81,15 +79,15 @@
     <button class="btn" id="savebtn">Save</button>
     <button class="btn" id="openbtn">Open</button>
   </div>
-  <div id="pill">
-    <div class="pname" id="pillname">part</div>
-    <button id="pillcolor" title="Change color"></button>
-    <button class="hide" id="pillcopy">Copy</button>
-    <button class="hide" id="pillrot">⟳ 45°</button>
-    <button class="hide" id="pillhide">Hide</button>
-    <button class="del" id="pilldel">Delete</button>
-  </div>
   <div class="bottombar">
+    <div id="pill" class="explode-row">
+      <div class="pname" id="pillname">part</div>
+      <button id="pillcolor" title="Change color"></button>
+      <button class="hide" id="pillcopy">Copy</button>
+      <button class="hide" id="pillrot">⟳ 45°</button>
+      <button class="hide" id="pillhide">Hide</button>
+      <button class="del" id="pilldel">Delete</button>
+    </div>
     <div class="explode-row">
       <label>EXPLODE</label>
       <input type="range" id="explode" min="0" max="100" value="0" />
