@@ -41,6 +41,13 @@
   .axisrow { display:flex; align-items:center; gap:10px; }
   .axisrow label { font-size:12px; color:var(--dim); font-weight:700; letter-spacing:.06em; width:44px; }
   .axisrow span { font-size:12px; color:var(--dim); width:52px; text-align:right; font-variant-numeric:tabular-nums; }
+  .axisrow .sizename { width:auto; text-align:left; color:var(--text); font-size:13px; font-weight:700; }
+  .axisrow button.btn { padding:6px 14px; font-size:13px; border-radius:10px; }
+  #pill.hidden-for-size { display:none !important; }
+  /* while a size slider is being dragged, ghost the whole bottom stack so the
+     part stays visible through it */
+  .bottombar.adjusting > * { opacity:.18; }
+  .bottombar > * { transition:opacity .15s; }
   #pill { display:none; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
   #pill.show { display:flex; }
   #pill .pname { flex:1; text-align:left; }
@@ -75,6 +82,18 @@
     .topbar button.btn { padding:8px 11px; font-size:13px; border-radius:10px; }
     .topbar { gap:6px; }
   }
+  /* phones: keep the Size panel small — measured 16% of a 430px-wide screen
+     (the pre-fix stack covered ~45% and buried the model) */
+  @media (max-width: 480px) {
+    .bottombar { gap:6px; padding-bottom:calc(env(safe-area-inset-bottom) + 8px); }
+    #sizerow { padding:6px 12px; gap:2px; }
+    #sizerow .axisrow { gap:8px; }
+    #sizerow input[type=range] { height:20px; }
+    #sizerow .axisrow label { width:36px; font-size:11px; }
+    #sizerow .axisrow span { width:44px; font-size:11px; }
+    .axisrow .sizename { font-size:12px; }
+    #sizerow button.btn { padding:4px 12px; font-size:12px; }
+  }
 </style>
 </head>
 <body>
@@ -100,11 +119,12 @@
       <button class="del" id="pilldel">Delete</button>
     </div>
     <div id="sizerow" class="explode-row" style="display:none; flex-direction:column; align-items:stretch; gap:6px;">
+      <div class="axisrow"><span class="sizename" id="sizename">part</span><span style="flex:1"></span><button class="btn" id="sizedone">Done</button></div>
       <div class="axisrow"><label>W&nbsp;(X)</label><input type="range" id="scalex" min="0" max="100" value="50" /><span id="scalexv">1.00×</span></div>
       <div class="axisrow"><label>H&nbsp;(Y)</label><input type="range" id="scaley" min="0" max="100" value="50" /><span id="scaleyv">1.00×</span></div>
       <div class="axisrow"><label>L&nbsp;(Z)</label><input type="range" id="scalez" min="0" max="100" value="50" /><span id="scalezv">1.00×</span></div>
     </div>
-    <div class="explode-row">
+    <div class="explode-row" id="exploderow">
       <label>EXPLODE</label>
       <input type="range" id="explode" min="0" max="100" value="0" />
     </div>

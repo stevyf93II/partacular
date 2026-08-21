@@ -66,11 +66,27 @@ export function initUI(doc: Document, hooks: UIHooks) {
   function setSizeOpen(open: boolean) {
     sizeOpen = open && doc.selectedId !== null;
     sizerow.style.display = sizeOpen ? 'flex' : 'none';
-    if (sizeOpen) syncSliders();
+    // phones: the pill + sliders + explode stack buries the model — while the
+    // size panel is open it is the ONLY bottom row, with its own Done button.
+    pill.classList.toggle('hidden-for-size', sizeOpen);
+    $('exploderow').style.display = sizeOpen ? 'none' : 'flex';
+    if (sizeOpen) {
+      $('sizename').textContent = doc.get(doc.selectedId!)?.name ?? 'part';
+      syncSliders();
+    }
   }
   $('pillsize').addEventListener('click', () => setSizeOpen(!sizeOpen));
+  $('sizedone').addEventListener('click', () => setSizeOpen(false));
+  const bottombar = document.querySelector('.bottombar') as HTMLElement;
+  const stopAdjusting = () => bottombar.classList.remove('adjusting');
+  window.addEventListener('pointerup', stopAdjusting);
+  window.addEventListener('pointercancel', stopAdjusting);
   for (const s of sliders) {
-    s.input.addEventListener('pointerdown', () => { if (doc.selectedId) doc.beginTransform(doc.selectedId); });
+    s.input.addEventListener('pointerdown', () => {
+      if (doc.selectedId) doc.beginTransform(doc.selectedId);
+      // ghost the panel while dragging so the part resizes in full view
+      bottombar.classList.add('adjusting');
+    });
     s.input.addEventListener('input', () => {
       const sel = doc.selectedId; if (!sel) return;
       const m = doc.get(sel); if (!m) return;
@@ -79,7 +95,7 @@ export function initUI(doc: Document, hooks: UIHooks) {
       doc.updateTransform(sel, { scale });
       s.out.textContent = scale[s.axis].toFixed(2) + '×';
     });
-    s.input.addEventListener('change', () => doc.endTransform());
+    s.input.addEventListener('change', () => { doc.endTransform(); stopAdjusting(); });
   }
   undoBtn.addEventListener('click', () => { const name = doc.undo(); if (name) showToast(`Restored ${name}`); refresh(); });
 
