@@ -36,7 +36,9 @@ export class Viewport {
     container.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(0x0d0f14);
-    this.camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 1000);
+    // Guard the initial aspect too: a hidden/zero-size window at load time gives 0/0 = NaN.
+    const safeAspect = innerWidth > 0 && innerHeight > 0 ? innerWidth / innerHeight : 1;
+    this.camera = new THREE.PerspectiveCamera(55, safeAspect, 0.01, 1000);
     this.camera.position.set(3, 2.2, 3.5);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -50,6 +52,9 @@ export class Viewport {
     this.scene.add(new THREE.GridHelper(10, 20, 0x2a3140, 0x1d2330));
 
     addEventListener('resize', () => {
+      // iOS/desktop can fire resize with zero dimensions mid-transition;
+      // 0/0 = NaN aspect poisons the projection matrix (kills raycast + render).
+      if (innerWidth <= 0 || innerHeight <= 0) return;
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
@@ -82,7 +87,21 @@ export class Viewport {
       else if (e.type === 'explode') this.applyAll();
     });
 
-    const loop = () => { requestAnimationFrame(loop); this.controls.update(); this.renderer.render(this.scene, this.camera); };
+    const loop = () => {
+      requestAnimationFrame(loop);
+      // Self-heal: if NaN ever reaches the projection matrix, rebuild it.
+      if (!Number.isFinite(this.camera.projectionMatrix.elements[0])) {
+        if (innerWidth > 0 && innerHeight > 0) {
+          this.camera.aspect = innerWidth / innerHeight;
+          if (!Number.isFinite(this.camera.near) || this.camera.near <= 0) this.camera.near = 0.01;
+          if (!Number.isFinite(this.camera.far) || this.camera.far <= this.camera.near) this.camera.far = 1000;
+          this.camera.updateProjectionMatrix();
+          this.renderer.setSize(innerWidth, innerHeight);
+        }
+      }
+      this.controls.update();
+      this.renderer.render(this.scene, this.camera);
+    };
     loop();
   }
 
@@ -274,6 +293,7 @@ export class Viewport {
       const d = this.modelRadius * 2.2;
       this.camera.position.copy(this.modelCenter).add(new THREE.Vector3(d, d * 0.7, d));
       this.camera.near = this.modelRadius / 200; this.camera.far = this.modelRadius * 200;
+      if (innerWidth > 0 && innerHeight > 0) this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       // Leash the camera so pinch-zoom can never run away to infinity.
       this.controls.minDistance = this.modelRadius * 0.15;
