@@ -37,7 +37,10 @@ type UndoStep =
   | { kind: 'hide'; id: string }
   | { kind: 'add'; id: string }
   | { kind: 'color'; id: string; before: number }
-  | { kind: 'transform'; id: string; before: PartTransform };
+  | { kind: 'transform'; id: string; before: PartTransform }
+  /** Several edits the user experienced as ONE action (e.g. a lasso: delete the
+   *  old part, add two new ones). Undone together or not at all. */
+  | { kind: 'batch'; steps: UndoStep[] };
 
 export class Document {
   private parts = new Map<string, PartMeta>();
@@ -45,6 +48,7 @@ export class Document {
   private removed = new Map<string, PartMeta>(); // kept for undo
   private listeners: Listener[] = [];
   private undoStack: UndoStep[] = [];
+  private batch: UndoStep[] | null = null;
   private transformBefore: PartTransform | null = null;
   private transformId: string | null = null;
   selectedId: string | null = null;
@@ -53,9 +57,23 @@ export class Document {
   on(fn: Listener) { this.listeners.push(fn); }
   private emit(e: DocEvent) { for (const fn of this.listeners) fn(e); }
 
+  /** Route an undo step into the open batch, or straight onto the stack. */
+  private pushUndo(step: UndoStep) {
+    if (this.batch) this.batch.push(step); else this.undoStack.push(step);
+  }
+
+  // ---- compound edits: begin -> (any number of mutations) -> end ----
+  beginBatch() { if (!this.batch) this.batch = []; }
+
+  endBatch() {
+    const b = this.batch;
+    this.batch = null;
+    if (b && b.length) this.undoStack.push({ kind: 'batch', steps: b });
+  }
+
   reset() {
     this.parts.clear(); this.order = []; this.removed.clear();
-    this.undoStack = []; this.selectedId = null; this.explodeFactor = 0;
+    this.undoStack = []; this.batch = null; this.selectedId = null; this.explodeFactor = 0;
     this.transformBefore = null; this.transformId = null;
     this.emit({ type: 'reset' });
   }
@@ -63,14 +81,14 @@ export class Document {
   addParts(metas: PartMeta[], recordUndo = false) {
     for (const m of metas) {
       this.parts.set(m.id, m); this.order.push(m.id);
-      if (recordUndo) this.undoStack.push({ kind: 'add', id: m.id });
+      if (recordUndo) this.pushUndo({ kind: 'add', id: m.id });
     }
     this.emit({ type: 'parts-added', ids: metas.map(m => m.id) });
   }
 
   setColor(id: string, color: number, recordUndo = true) {
     const m = this.parts.get(id); if (!m || m.color === color) return;
-    if (recordUndo) this.undoStack.push({ kind: 'color', id, before: m.color });
+    if (recordUndo) this.pushUndo({ kind: 'color', id, before: m.color });
     m.color = color;
     this.emit({ type: 'part-color', id, color });
   }
@@ -88,7 +106,7 @@ export class Document {
   deletePart(id: string) {
     const m = this.parts.get(id); if (!m) return;
     this.parts.delete(id); this.removed.set(id, m);
-    this.undoStack.push({ kind: 'delete', id });
+    this.pushUndo({ kind: 'delete', id });
     if (this.selectedId === id) this.select(null);
     this.emit({ type: 'part-removed', id });
   }
@@ -96,7 +114,7 @@ export class Document {
   setVisible(id: string, visible: boolean, recordUndo = true) {
     const m = this.parts.get(id); if (!m || m.visible === visible) return;
     m.visible = visible;
-    if (!visible && recordUndo) this.undoStack.push({ kind: 'hide', id });
+    if (!visible && recordUndo) this.pushUndo({ kind: 'hide', id });
     if (this.selectedId === id && !visible) this.select(null);
     this.emit({ type: 'part-visibility', id, visible });
   }
@@ -124,7 +142,7 @@ export class Document {
       const changed = b.rotationY !== a.rotationY ||
         b.scale[0] !== a.scale[0] || b.scale[1] !== a.scale[1] || b.scale[2] !== a.scale[2] ||
         b.position[0] !== a.position[0] || b.position[1] !== a.position[1] || b.position[2] !== a.position[2];
-      if (changed) this.undoStack.push({ kind: 'transform', id: this.transformId, before: this.transformBefore });
+      if (changed) this.pushUndo({ kind: 'transform', id: this.transformId, before: this.transformBefore });
     }
     this.transformId = null; this.transformBefore = null;
   }
@@ -133,6 +151,19 @@ export class Document {
 
   undo(): string | null {
     const step = this.undoStack.pop(); if (!step) return null;
+    return this.applyUndo(step);
+  }
+
+  private applyUndo(step: UndoStep): string | null {
+    if (step.kind === 'batch') {
+      // Reverse order: the last thing done is the first thing undone.
+      let name: string | null = null;
+      for (let i = step.steps.length - 1; i >= 0; i--) {
+        const n = this.applyUndo(step.steps[i]);
+        if (n) name = n;
+      }
+      return name;
+    }
     if (step.kind === 'delete') {
       const m = this.removed.get(step.id);
       if (m) { this.removed.delete(step.id); this.parts.set(step.id, m); this.emit({ type: 'parts-added', ids: [step.id] }); }

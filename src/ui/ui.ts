@@ -9,6 +9,8 @@ export interface UIHooks {
   onExport: (kind: 'glb' | 'stl' | '3mf') => void;
   onFit: () => void;
   onSplitToggle: () => void;
+  onCarve: () => void;
+  onJoin: () => void;
 }
 
 export function initUI(doc: Document, hooks: UIHooks) {
@@ -31,6 +33,8 @@ export function initUI(doc: Document, hooks: UIHooks) {
 
   $('pilldel').addEventListener('click', () => { if (doc.selectedId) doc.deletePart(doc.selectedId); });
   $('pillrot').addEventListener('click', () => hooks.onRotate());
+  $('pillcarve').addEventListener('click', () => hooks.onCarve());
+  $('pilljoin').addEventListener('click', () => hooks.onJoin());
   $('pillcopy').addEventListener('click', () => hooks.onDuplicate());
   $('pillcolor').addEventListener('click', () => hooks.onRecolor());
   $('fitbtn').addEventListener('click', () => hooks.onFit());

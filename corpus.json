@@ -1,0 +1,70 @@
+{
+  "_comment": [
+    "The segmentation corpus. Replaces a single reference model + exact output hash.",
+    "",
+    "Why ranges and not a hash: a hash of one model's per-triangle labels forbids ALL",
+    "change. Any tuning that helps a second model breaks the first model's fingerprint,",
+    "and with only one model in the lockfile there is no way to weigh the trade -- only",
+    "to observe that something moved. That is a ratchet against improvement.",
+    "",
+    "status 'required' -> must stay inside its range; the gate blocks if it does not.",
+    "status 'failing'  -> a known gap, tracked not hidden. Reported loudly, never blocks.",
+    "                     If it starts passing the gate says so and asks you to promote it.",
+    "",
+    "The ratchet now points the right way: quality can only be locked in, never locked out."
+  ],
+  "fixtures": [
+    {
+      "name": "twoBalls",
+      "status": "required",
+      "expect": { "minParts": 2, "maxParts": 2 },
+      "why": "two physically separate spheres — connected components alone must split these"
+    },
+    {
+      "name": "ball",
+      "status": "required",
+      "expect": { "minParts": 1, "maxParts": 1 },
+      "why": "convex everywhere; over-segmenting a smooth sphere means the curvature threshold is chasing noise"
+    },
+    {
+      "name": "grooved",
+      "status": "required",
+      "expect": { "minParts": 2, "maxParts": 4, "largestFractionMax": 0.75 },
+      "why": "a deep groove cut around a bar; must yield two comparable halves, not one bar plus a thin ring"
+    },
+    {
+      "name": "peanut",
+      "status": "failing",
+      "expect": { "minParts": 2, "maxParts": 4 },
+      "why": "two lobes meeting at a ~77 degree concave crease — the most obvious split there is",
+      "note": [
+        "KNOWN GAP as of this corpus being written. The watershed DOES find both lobes:",
+        "with mergeStopDeg=2 the result is a clean 48620/48180 halving. Every larger value",
+        "collapses it back to one part.",
+        "",
+        "Cause: boundary-strength merging scores a region boundary by the MEAN concave angle",
+        "along it. The crease is ~77 degrees, but only on the exact ring of edges where the",
+        "two spheres meet. If the watershed line lands a row off that ring, the edges it",
+        "actually measures are flat and the mean collapses toward zero, so the boundary reads",
+        "as 'gentle' and the two lobes are merged.",
+        "",
+        "This is why tuning mergeStopDeg goes in circles: it is being asked to discriminate",
+        "using a statistic that depends on exactly where the watershed line landed. 14 happens",
+        "to suit diablo.glb.",
+        "",
+        "Candidate fixes (not applied — this changes shipped output, so it is Steve's call):",
+        "  a) score boundaries by a high percentile of concave angle rather than the mean",
+        "  b) dilate the boundary by one ring of faces before measuring",
+        "  c) snap region boundaries onto the local curvature ridge before scoring"
+      ]
+    }
+  ],
+  "localModels": [
+    {
+      "path": "reference/diablo.glb",
+      "status": "optional",
+      "expect": { "minParts": 12, "maxParts": 40 },
+      "why": "the original acceptance model; 49MB and not in git, so it runs only where it exists"
+    }
+  ]
+}

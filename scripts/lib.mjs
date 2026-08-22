@@ -2,6 +2,7 @@
 // production entry point (splitPipeline.smartSplit) — one call path, no harness.
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 
@@ -12,8 +13,13 @@ const SOURCES = ['src/geometry/split.ts', 'src/geometry/print.ts', 'src/geometry
 /** Compile the production geometry sources for node and import the entry point. */
 export async function loadPipeline() {
   execSync(`npx tsc ${SOURCES.join(' ')} --outDir ${GATE_BUILD} --target es2022 --module es2022 --moduleResolution bundler --skipLibCheck --ignoreConfig`, { stdio: 'inherit' });
-  const pipe = await import(path.resolve(GATE_BUILD, 'splitPipeline.js'));
-  const cfgMod = await import(path.resolve(GATE_BUILD, 'segmentation.config.js'));
+  // pathToFileURL, not path.resolve: on Windows a resolved path is "C:\..."
+  // and Node's ESM loader reads "c:" as an unknown URL scheme, so the gate
+  // could never run locally. POSIX absolute paths happened to work, which is
+  // why CI passed and only the local half was broken.
+  const url = f => pathToFileURL(path.resolve(GATE_BUILD, f)).href;
+  const pipe = await import(url('splitPipeline.js'));
+  const cfgMod = await import(url('segmentation.config.js'));
   const { MeshoptSimplifier } = await import('meshoptimizer');
   await MeshoptSimplifier.ready;
   return { smartSplit: pipe.smartSplit, SEGMENTATION_CONFIG: cfgMod.SEGMENTATION_CONFIG, MeshoptSimplifier };

@@ -13,7 +13,13 @@ THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 interface PartVisual { mesh: THREE.Mesh; baseCenter: THREE.Vector3; explodeDir: THREE.Vector3; }
 
-type GestureMode = 'none' | 'camera' | 'move' | 'pinch';
+type GestureMode = 'none' | 'camera' | 'move' | 'pinch' | 'stroke';
+
+/** A repair the user armed from the UI but has not yet drawn or picked. */
+type RepairMode =
+  | null
+  | { kind: 'lasso'; done: (strokeNDC: Float32Array, mvp: Float32Array) => void }
+  | { kind: 'merge'; done: (otherId: string) => void };
 
 export class Viewport {
   private renderer: THREE.WebGLRenderer;
@@ -27,6 +33,12 @@ export class Viewport {
   private gridSize = 10;
   private modelRadius = 1;
   private lastTap = { x: -999, y: -999, hits: [] as string[], cursor: 0 };
+
+  // repair: freehand stroke capture, drawn on a 2D canvas above the GL canvas
+  private overlay!: HTMLCanvasElement;
+  private octx!: CanvasRenderingContext2D;
+  private repairMode: RepairMode = null;
+  private strokePx: number[] = [];
 
   // gesture state
   private pointers = new Map<number, { x: number; y: number }>();
@@ -44,6 +56,14 @@ export class Viewport {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     container.appendChild(this.renderer.domElement);
+
+    // Stroke overlay. A separate 2D canvas keeps freehand ink out of the GL
+    // pipeline entirely -- no scene objects, no re-render per pointer sample.
+    this.overlay = document.createElement('canvas');
+    this.overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5';
+    container.appendChild(this.overlay);
+    this.octx = this.overlay.getContext('2d')!;
+    this.sizeOverlay();
 
     this.scene.background = new THREE.Color(0x0d0f14);
     // Guard the initial aspect too: a hidden/zero-size window at load time gives 0/0 = NaN.
@@ -69,6 +89,7 @@ export class Viewport {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
+      this.sizeOverlay();
     });
 
     // Gesture routing (capture phase so we can mute OrbitControls before it reacts):
@@ -116,6 +137,97 @@ export class Viewport {
     loop();
   }
 
+  // ---------- repair modes ----------
+  private sizeOverlay() {
+    const dpr = Math.min(devicePixelRatio, 2);
+    this.overlay.width = Math.max(1, Math.floor(innerWidth * dpr));
+    this.overlay.height = Math.max(1, Math.floor(innerHeight * dpr));
+    this.overlay.style.width = innerWidth + 'px';
+    this.overlay.style.height = innerHeight + 'px';
+    this.octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  isRepairing(): boolean { return this.repairMode !== null; }
+
+  /** Arm freehand mode: the next drag draws a lasso or cut over the selection. */
+  beginLasso(done: (strokeNDC: Float32Array, mvp: Float32Array) => void) {
+    this.repairMode = { kind: 'lasso', done };
+    this.controls.enabled = false;
+  }
+
+  /** Arm merge mode: the next tap on another part reports its id. */
+  beginMerge(done: (otherId: string) => void) {
+    this.repairMode = { kind: 'merge', done };
+  }
+
+  cancelRepair() {
+    this.repairMode = null;
+    this.strokePx = [];
+    this.clearOverlay();
+    this.controls.enabled = true;
+  }
+
+  private clearOverlay() { this.octx.clearRect(0, 0, innerWidth, innerHeight); }
+
+  private drawStroke() {
+    this.clearOverlay();
+    const n = this.strokePx.length / 2;
+    if (n < 2) return;
+    const c = this.octx;
+    c.lineWidth = 2.5; c.lineJoin = 'round'; c.lineCap = 'round';
+    c.strokeStyle = '#4da3ff';
+    c.beginPath();
+    c.moveTo(this.strokePx[0], this.strokePx[1]);
+    for (let i = 1; i < n; i++) c.lineTo(this.strokePx[i * 2], this.strokePx[i * 2 + 1]);
+    c.stroke();
+    // A dashed chord back to the start shows, while the finger is still down,
+    // that closing the loop turns the stroke into a region select.
+    if (n > 4) {
+      c.save();
+      c.setLineDash([5, 5]);
+      c.strokeStyle = 'rgba(77,163,255,0.35)';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(this.strokePx[(n - 1) * 2], this.strokePx[(n - 1) * 2 + 1]);
+      c.lineTo(this.strokePx[0], this.strokePx[1]);
+      c.stroke();
+      c.restore();
+    }
+  }
+
+  /** MVP for a part AS CURRENTLY DRAWN, explode offset included. */
+  private mvpFor(id: string): Float32Array | null {
+    const v = this.visuals.get(id); if (!v) return null;
+    v.mesh.updateMatrixWorld(true);
+    this.camera.updateMatrixWorld(true);
+    const m = new THREE.Matrix4()
+      .multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse)
+      .multiply(v.mesh.matrixWorld);
+    return new Float32Array(m.elements);
+  }
+
+  private finishStroke() {
+    const mode = this.repairMode;
+    const sel = this.doc.selectedId;
+    this.clearOverlay();
+    if (!mode || mode.kind !== 'lasso' || !sel || this.strokePx.length < 6) {
+      this.cancelRepair();
+      return;
+    }
+    const mvp = this.mvpFor(sel);
+    if (!mvp) { this.cancelRepair(); return; }
+    const n = this.strokePx.length / 2;
+    const ndc = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      ndc[i * 2] = (this.strokePx[i * 2] / innerWidth) * 2 - 1;
+      ndc[i * 2 + 1] = -(this.strokePx[i * 2 + 1] / innerHeight) * 2 + 1;
+    }
+    this.repairMode = null;
+    this.strokePx = [];
+    this.controls.enabled = true;
+    mode.done(ndc, mvp);
+  }
+
   // ---------- gesture handlers ----------
   private selectedVisual(): PartVisual | null {
     return this.doc.selectedId ? this.visuals.get(this.doc.selectedId) ?? null : null;
@@ -140,13 +252,23 @@ export class Viewport {
   private resetGestures() {
     this.pointers.clear();
     if (this.mode === 'move' || this.mode === 'pinch') this.doc.endTransform();
+    if (this.mode === 'stroke') { this.strokePx = []; this.clearOverlay(); }
     this.mode = 'none';
+    this.repairMode = null;
     this.controls.enabled = true;
   }
 
   private onPointerDown(e: PointerEvent) {
     try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.repairMode && this.repairMode.kind === 'lasso' && this.pointers.size === 1) {
+      this.mode = 'stroke';
+      this.controls.enabled = false;
+      this.strokePx = [e.clientX, e.clientY];
+      this.downX = e.clientX; this.downY = e.clientY;
+      this.downT = performance.now(); this.moved = false;
+      return;
+    }
     if (this.pointers.size === 1) {
       this.downX = e.clientX; this.downY = e.clientY; this.downT = performance.now(); this.moved = false;
       const sel = this.doc.selectedId;
@@ -183,6 +305,15 @@ export class Viewport {
     const p = this.pointers.get(e.pointerId); if (!p) return;
     p.x = e.clientX; p.y = e.clientY;
     if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 8) this.moved = true;
+    if (this.mode === 'stroke') {
+      const n = this.strokePx.length;
+      // Drop samples closer than 2px: they add cost and jitter, not shape.
+      if (n < 2 || Math.hypot(e.clientX - this.strokePx[n - 2], e.clientY - this.strokePx[n - 1]) > 2) {
+        this.strokePx.push(e.clientX, e.clientY);
+        this.drawStroke();
+      }
+      return;
+    }
     const sel = this.doc.selectedId;
     if (!sel) return;
     if (this.mode === 'move' && this.pointers.size === 1) {
@@ -206,6 +337,12 @@ export class Viewport {
   private onPointerUp(e: PointerEvent) {
     if (!this.pointers.has(e.pointerId)) return; // already handled (canvas + window both listen)
     this.pointers.delete(e.pointerId);
+    if (this.mode === 'stroke') {
+      if (this.pointers.size > 0) return;
+      this.mode = 'none';
+      this.finishStroke();
+      return;
+    }
     if (this.pointers.size > 0) {
       // dropped one finger of a pinch: fall back to move with remaining finger re-anchored
       if (this.mode === 'pinch' && this.pointers.size === 1 && this.doc.selectedId) {
@@ -342,6 +479,13 @@ export class Viewport {
 
   private handleTap(x: number, y: number) {
     const hitIds = this.raycastAt(x, y);
+    const mode = this.repairMode;
+    if (mode && mode.kind === 'merge') {
+      const other = hitIds.find(id => id !== this.doc.selectedId);
+      this.repairMode = null;
+      if (other) mode.done(other);
+      return;
+    }
     if (hitIds.length === 0) { this.doc.select(null); this.lastTap.hits = []; return; }
     const near = Math.hypot(x - this.lastTap.x, y - this.lastTap.y) < 24;
     const sameStack = near && JSON.stringify(hitIds) === JSON.stringify(this.lastTap.hits);

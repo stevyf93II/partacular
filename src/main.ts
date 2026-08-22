@@ -4,6 +4,7 @@ import { Viewport } from './viewport/viewport';
 import { initUI } from './ui/ui';
 import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometry/loaders';
 import { splitInWorker } from './geometry/splitClient';
+import { repairFromStroke } from './geometry/repair';
 import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
 import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
 import { export3MFInWorker } from './geometry/printClient';
@@ -27,6 +28,8 @@ const ui = initUI(doc, {
   onExport: kind => doExport(kind).catch(err => ui.showToast(`Export failed: ${err.message ?? err}`)),
   onFit: () => viewport.fitCamera(),
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
+  onCarve: () => startCarve(),
+  onJoin: () => startJoin(),
 });
 let modelName = 'model';
 let lastSplitUsed = false; // whether current parts came from the split pipeline
@@ -42,7 +45,13 @@ function provenance(): string {
 
 /** All visible parts baked into one world-space soup geometry. */
 function bakeCurrentToSoup(): THREE.BufferGeometry | null {
-  const metas = doc.list().filter(m => m.visible);
+  return bakeParts(doc.list().filter(m => m.visible));
+}
+
+/** Named parts baked into one world-space soup geometry.
+ *  Uses DOCUMENT transforms only -- never the exploded display offset -- so
+ *  joining two parts while the model is blown apart does not teleport them. */
+function bakeParts(metas: PartMeta[]): THREE.BufferGeometry | null {
   if (metas.length === 0) return null;
   let total = 0;
   const baked: Float32Array[] = [];
@@ -88,6 +97,113 @@ async function splitOrMerge() {
     ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
   }
 }
+
+/** Replace one part with the pieces a repair produced. One undo step. */
+function applyPartition(id: string, triGroup: Uint32Array, groupCount: number, names: string[]) {
+  const src = doc.get(id); const geo = getGeometry(id);
+  if (!src || !geo) return 0;
+  const pieces = buildGroupGeometries(geo, triGroup, groupCount);
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), src.transform.rotationY);
+  const scale = new THREE.Vector3(...src.transform.scale);
+  const metas: PartMeta[] = [];
+
+  doc.beginBatch();
+  doc.deletePart(id);
+  pieces.forEach((g, i) => {
+    if (g.getAttribute('position').count === 0) { g.dispose(); return; }
+    // Re-pivot each piece on its own centre, then carry that centre out through
+    // the parent's own rotation and scale so the piece does not visibly shift
+    // at the moment it becomes a separate part.
+    g.computeBoundingBox();
+    const c = g.boundingBox!.getCenter(new THREE.Vector3());
+    g.translate(-c.x, -c.y, -c.z);
+    g.computeBoundingBox();
+    const nid = newId();
+    putGeometry(nid, g);
+    const offset = c.clone().multiply(scale).applyQuaternion(q);
+    const t = identityTransform();
+    t.position = [
+      src.transform.position[0] + offset.x,
+      src.transform.position[1] + offset.y,
+      src.transform.position[2] + offset.z,
+    ];
+    t.rotationY = src.transform.rotationY;
+    t.scale = [...src.transform.scale];
+    metas.push({
+      id: nid, name: names[i] ?? `${src.name} ${i + 1}`,
+      triCount: g.getAttribute('position').count / 3,
+      visible: true, color: PALETTE[(doc.count() + i) % PALETTE.length], transform: t,
+    });
+  });
+  doc.addParts(metas, true);
+  doc.endBatch();
+  doc.select(metas[0]?.id ?? null);
+  viewport.refreshModelBounds();
+  return metas.length;
+}
+
+/** Draw a loop to lift a region out, or a line to cut straight across. */
+function startCarve() {
+  const sel = doc.selectedId;
+  if (!sel) { ui.showToast('Pick a part first, then Carve'); return; }
+  ui.showToast('Draw around a piece to lift it out — or a line straight across to cut');
+  viewport.beginLasso((stroke, mvp) => {
+    const geo = getGeometry(sel);
+    const src = doc.get(sel);
+    if (!geo || !src) return;
+    const pos = geo.getAttribute('position').array as Float32Array;
+    const idx = geo.getIndex();
+    const index = idx ? new Uint32Array(idx.array as ArrayLike<number>) : null;
+    const res = repairFromStroke(pos, index, mvp, stroke);
+    if (!res) { ui.showToast('That did not separate anything — try drawing right around the piece'); return; }
+    const names = res.intent === 'lasso'
+      ? [src.name, `${src.name} piece`]
+      : [`${src.name} A`, `${src.name} B`];
+    applyPartition(sel, res.triGroup, res.groupCount, names);
+    ui.showToast(res.intent === 'lasso' ? 'Lifted that piece out' : 'Cut in two');
+  });
+}
+
+/** Merge the selection with whichever part the user taps next. */
+function startJoin() {
+  const sel = doc.selectedId;
+  if (!sel) { ui.showToast('Pick a part first, then Join'); return; }
+  ui.showToast('Now tap the part to join it to');
+  viewport.beginMerge(otherId => {
+    const a = doc.get(sel), b = doc.get(otherId);
+    if (!a || !b) return;
+    const soup = bakeParts([a, b]);
+    if (!soup) return;
+    soup.computeBoundingBox();
+    const c = soup.boundingBox!.getCenter(new THREE.Vector3());
+    soup.translate(-c.x, -c.y, -c.z);
+    soup.computeBoundingBox();
+    soup.computeVertexNormals();
+    const nid = newId();
+    putGeometry(nid, soup);
+    const t = identityTransform();
+    t.position = [c.x, c.y, c.z];
+    doc.beginBatch();
+    doc.deletePart(sel);
+    doc.deletePart(otherId);
+    doc.addParts([{
+      id: nid, name: a.name, triCount: soup.getAttribute('position').count / 3,
+      visible: true, color: a.color, transform: t,
+    }], true);
+    doc.endBatch();
+    doc.select(nid);
+    viewport.refreshModelBounds();
+    ui.showToast(`Joined ${a.name} and ${b.name}`);
+  });
+}
+
+// Escape always backs out of an armed repair.
+window.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && viewport.isRepairing()) {
+    viewport.cancelRepair();
+    ui.showToast('Cancelled');
+  }
+});
 
 function duplicateSelected() {
   const sel = doc.selectedId; if (!sel) return;
@@ -209,6 +325,15 @@ function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[])
   if (Number.isFinite(minY) && minY !== 0) for (const m of metas) m.transform.position[1] -= minY;
   doc.addParts(metas);
   viewport.fitCamera();
+}
+
+// Gesture regression tests, dev only: http://localhost:5199/?gtest=1
+// The computed path keeps the suite out of the production bundle.
+if (import.meta.env.DEV && new URLSearchParams(location.search).has('gtest')) {
+  const suite = '/test/gestures.browser.js';
+  import(/* @vite-ignore */ suite)
+    .then(m => m.run())
+    .catch(err => console.error('gesture tests failed to load', err));
 }
 
 // PWA: service worker (network-first in sw.js, so fresh deploys always win when online).

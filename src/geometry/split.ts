@@ -34,7 +34,7 @@ class UnionFind {
 }
 
 /** Dedup vertices by exact position so triangle soups (STL) connect. */
-function canonicalVertexIds(positions: Float32Array): Int32Array {
+export function canonicalVertexIds(positions: Float32Array): Int32Array {
   const n = positions.length / 3;
   const canon = new Int32Array(n);
   const map = new Map<string, number>();
