@@ -106,33 +106,51 @@ loosens merging passes half of these and shatters the other half.
 passing, the gate says so and `npm run accept` promotes it to `required`. The
 ratchet points at quality: it can be locked in, never locked out.
 
-### How boundary strength is measured
+### Known gap: `peanut`, and why it is staying open
 
-Boundary-strength merging used to score a region boundary by the **mean** concave
-angle along it. That mean is halved by something with no geometric meaning:
-**exactly half of any boundary's edges are triangulation diagonals** carrying no
-concavity at all. On the two-lobe fixture a real 77° crease measured 5.5° as a
-mean, and merged away under `mergeStopDeg=14`.
+Two spheres meeting at a hard ~77 degree concave crease come back as **1 part**.
+The watershed is not at fault -- it produces a clean 48620/48180 halving, and
+boundary-strength merging then destroys it.
 
-It is now read at the 70th percentile instead (`BOUNDARY_PERCENTILE` in
-`segment.ts`). Measured safe band on the corpus at `mergeStopDeg=14`:
+The cause is measured, not guessed. Instrumenting the merge decision gives:
 
-| percentile | result |
-|---|---|
-| p50 | `peanut` still merges away — under-splits |
-| **p60–p75** | **every fixture correct** |
-| p80+ | staircase noise reads as structure; `noisyBall` → 5 parts |
-| p95 | `noisyBall` → 10 parts |
+```
+label boundary spans z=[0.0074]     <- where the split line landed
+sharp raw crease spans z=[0.0000]   <- where the crease actually is
+boundary: n=439 zeros=219 (50%) mean=5.5 p50=11.0 max=17.4
+```
 
-`0.70` sits mid-band with about ten points of margin either way. It is
-deliberately **not** a tuned knob in `SegmentConfig` — promoting it would invite
-exactly the per-model tuning this measurement was changed to avoid.
+Two dilutions, neither geometric: **exactly half of any boundary's edges are
+triangulation diagonals** carrying no concavity, so the mean is halved by how the
+mesh happened to be triangulated; and the watershed line settles beside its
+crease rather than on it.
 
-**Reach matters as much as the statistic.** Scoring per-*face* curvature, or
-dilating it by one ring of neighbours, also fixes `peanut` — and shatters
-`noisyBall` into 18 parts, because a max-of-a-max amplifies precisely the
-staircase texture that normal smoothing exists to suppress. The measure stays on
-the per-edge smoothed field. `noisyBall` exists to keep it there.
+Reading that same field at a percentile instead of a mean fixes it. **It is still
+not shipped**, because it was then measured against the real model:
+
+| | accepted (mean) | percentile |
+|---|---|---|
+| parts | 25 | 30 |
+| body | 1,369,030 | 1,237,807 + **sill 106,521** |
+| **door** | **83,423 (whole)** | **42,639 + 40,784 (split)** |
+
+Splitting the door into its inner and outer skin means touching the door hands
+you half a door. That fails the one interaction the app exists for, so the
+trade is not worth a synthetic fixture. Also measured: on diablo the percentile
+*value* is irrelevant -- p50 through p70 give byte-identical output -- so this
+cannot be tuned around. It is mean-or-percentile, and mean wins on the model
+that matters.
+
+Do not reopen this without `reference/diablo.glb` present, and look at the door
+in `npm run preview` before believing any number.
+
+### The bigger point
+
+Part *count* is the wrong measure. What matters is whether touching a thing
+gives you that thing, and by that measure the accepted output is not good
+either: the largest part is **1,369,030 triangles, 69% of the whole car**. Touch
+the bodywork and you select most of the vehicle. Both behaviours fail the same
+bar, which is why the answer is not to keep tuning between them.
 
 ### What changed, and why
 

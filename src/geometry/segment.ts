@@ -20,37 +20,13 @@ export interface SegmentConfig {
   minRegionFrac: number;
   /** decimation target for the analysis proxy */
   proxyTris: number;
-  /** region boundaries whose concave angle (at BOUNDARY_PERCENTILE) is below this merge away (degrees) */
+  /** region boundaries with mean concave angle below this merge away (degrees) */
   mergeStopDeg: number;
   /** normal-smoothing iterations before curvature */
   smoothIters: number;
   /** regions with boundary > factor*sqrt(area) are slivers and get absorbed */
   thinnessFactor: number;
 }
-
-/**
- * Where to read a boundary's strength from its sorted concave angles.
- *
- * NOT a mean, and deliberately NOT a tuned knob. Exactly half of any region
- * boundary's edges are triangulation diagonals carrying no concavity at all, so
- * a mean is halved by how the mesh happened to be triangulated rather than by
- * its shape: a 76-degree crease on the two-lobe fixture measured 5.5 degrees as
- * a mean and 11 as a median, and merged away under mergeStopDeg=14.
- *
- * Measured safe band on the corpus (see corpus.json), at mergeStopDeg=14:
- *   p50        two-lobe fixture still merges away -- under-splits
- *   p60..p75   every fixture correct
- *   p80+       voxel-staircase noise starts reading as structure; a noisy
- *              sphere shatters into 5 parts, and 10 by p95
- * 0.70 sits mid-band with about ten points of margin either way.
- *
- * Reach matters as much as the statistic: this stays on the PER-EDGE smoothed
- * field. Scoring per-FACE curvature instead, or dilating by a ring of
- * neighbours, also fixes the two-lobe case but shatters the same noisy sphere
- * into 18 parts -- a max-of-a-max amplifies exactly the staircase texture that
- * normal smoothing exists to suppress.
- */
-const BOUNDARY_PERCENTILE = 0.70;
 
 export function assertSegmentConfig(cfg: Partial<SegmentConfig> | undefined): asserts cfg is SegmentConfig {
   const keys: (keyof SegmentConfig)[] = ['persistDeg', 'minRegionFrac', 'proxyTris', 'mergeStopDeg', 'smoothIters', 'thinnessFactor'];
@@ -229,22 +205,20 @@ export function watershedSegment(
   {
     const stopRad = (cfg.mergeStopDeg * Math.PI) / 180;
     for (let iter = 0; iter < 200; iter++) {
-      const bAngles = new Map<string, number[]>();
+      const bSum = new Map<string, number>(), bCnt = new Map<string, number>();
       for (let i = 0; i < edgeInfo.length; i++) {
         const l1 = label[edgeInfo[i][0]], l2 = label[edgeInfo[i][1]];
         if (l1 === l2) continue;
         const key = l1 < l2 ? l1 + ':' + l2 : l2 + ':' + l1;
-        let arr = bAngles.get(key);
-        if (!arr) { arr = []; bAngles.set(key, arr); }
-        arr.push(edgeConc[i]);
+        bSum.set(key, (bSum.get(key) || 0) + edgeConc[i]);
+        bCnt.set(key, (bCnt.get(key) || 0) + 1);
       }
-      let bestKey = ''; let bestScore = Infinity;
-      for (const [key, arr] of bAngles) {
-        arr.sort((x, y) => x - y);
-        const score = arr[Math.min(arr.length - 1, Math.floor(arr.length * BOUNDARY_PERCENTILE))];
-        if (score < bestScore) { bestScore = score; bestKey = key; }
+      let bestKey = ''; let bestMean = Infinity;
+      for (const [key, cnt] of bCnt) {
+        const mean = (bSum.get(key) || 0) / cnt;
+        if (mean < bestMean) { bestMean = mean; bestKey = key; }
       }
-      if (!bestKey || bestScore >= stopRad) break;
+      if (!bestKey || bestMean >= stopRad) break;
       const [ra, rb] = bestKey.split(':').map(Number);
       for (let k = 0; k < nTri; k++) if (label[k] === rb) label[k] = ra;
     }
