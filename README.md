@@ -131,6 +131,18 @@ Raking the whole model re-seats it on the grid afterwards; raking a selection
 does not, because dropping a lone selection to the floor would tear it away from
 everything else.
 
+### Framing
+
+`Fit` measures each part's real oriented bounding **box**. It used to add a
+**cube** of side 2r around each part's centre, r being the bounding *sphere*
+radius — and a sphere radius is half the diagonal, so anything long and flat was
+measured far larger than it is. On a car that parked the camera 1.6x too far
+back, which is why models arrived small in the corner of the view.
+
+It also fits for the narrower of the two field-of-view angles rather than the
+vertical alone, so a wide model does not run off the sides of a phone held in
+portrait.
+
 ### Orientation is a quaternion
 
 `PartTransform` used to carry a single `rotationY`, which cannot express rake at

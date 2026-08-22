@@ -662,19 +662,33 @@ export class Viewport {
   }
 
   refreshModelBounds(fit = false) {
-    // Bounds come from the DOCUMENT (un-exploded positions + geometry spheres).
-    // Never measure exploded meshes: that fed explode offsets back into the
-    // explode directions and amplified them every gesture (runaway scatter bug).
+    // Bounds come from the DOCUMENT, never from the meshes as drawn: measuring
+    // exploded meshes fed explode offsets back into the explode directions and
+    // amplified them every gesture (runaway scatter bug).
+    //
+    // Each part contributes its real oriented bounding BOX. It used to
+    // contribute a CUBE of side 2r around its centre, r being the bounding
+    // SPHERE radius -- and a sphere radius is half the diagonal, so anything
+    // long and flat was measured far larger than it is. On a car that inflated
+    // the model radius enough to park the camera at roughly twice the distance
+    // it should be, which is why models arrived tiny in the corner of the view.
     const box = new THREE.Box3();
+    const mtx = new THREE.Matrix4();
+    const quat = new THREE.Quaternion();
+    const partBox = new THREE.Box3();
     let any = false;
     for (const [id, v] of this.visuals) {
       const m = this.doc.get(id); if (!m) continue;
       const geo = v.mesh.geometry as THREE.BufferGeometry;
-      if (!geo.boundingSphere) geo.computeBoundingSphere();
-      const r = (geo.boundingSphere?.radius ?? 0.1) * Math.max(...m.transform.scale);
-      const p = new THREE.Vector3(...m.transform.position);
-      box.expandByPoint(p.clone().addScalar(r));
-      box.expandByPoint(p.clone().addScalar(-r));
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      if (!geo.boundingBox) continue;
+      mtx.compose(
+        new THREE.Vector3(...m.transform.position),
+        quat.fromArray(m.transform.rotation),
+        new THREE.Vector3(...m.transform.scale),
+      );
+      partBox.copy(geo.boundingBox).applyMatrix4(mtx);
+      box.union(partBox);
       any = true;
     }
     if (!any) return;
@@ -698,8 +712,19 @@ export class Viewport {
         this.gridSize = want;
       }
       this.controls.target.copy(this.modelCenter);
-      const d = this.modelRadius * 2.2;
-      this.camera.position.copy(this.modelCenter).add(new THREE.Vector3(d, d * 0.7, d));
+      // Fit for the NARROWER of the two field-of-view angles. Framing on the
+      // vertical alone leaves a wide model running off the sides of a phone in
+      // portrait; framing on the horizontal alone does the same to a tall one.
+      const size = box.getSize(new THREE.Vector3());
+      const vFov = (this.camera.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(this.camera.aspect, 0.2));
+      const dV = (Math.max(size.y, 0.001) / 2) / Math.tan(vFov / 2);
+      const dH = (Math.max(size.x, size.z, 0.001) / 2) / Math.tan(hFov / 2);
+      const d = Math.max(dV, dH, this.modelRadius * 0.5) * 1.35;
+      // A three-quarter view: enough angle to read depth, flat enough that a
+      // car still looks like a car rather than a plan drawing.
+      const dir = new THREE.Vector3(0.62, 0.42, 0.9).normalize().multiplyScalar(d);
+      this.camera.position.copy(this.modelCenter).add(dir);
       this.camera.near = this.modelRadius / 200; this.camera.far = this.modelRadius * 200;
       if (innerWidth > 0 && innerHeight > 0) this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
