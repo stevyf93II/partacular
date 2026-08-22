@@ -159,6 +159,19 @@ angle order gets one of the two wrong the moment a part is both twisted and
 raked. Orientation is now a quaternion, and twist, ⟳ 45° and rake all compose
 correctly.
 
+## On a phone
+
+Every bar wraps. The top bar was `flex-wrap: nowrap`, which on a 375px screen
+pushed Fit, Save, Open and Stance clean off the right edge with no scroll and no
+hint they were there — the wordmark alone was eating nearly half the width
+before a single button got a look in. It now wraps to two rows, the wordmark
+shrinks under 560px, and the flexible spacer drops out rather than consuming a
+whole wrapped row by itself.
+
+The gesture suite asserts it: no control may sit past the edge of the screen,
+and the page may never scroll sideways. Run it at a phone width for that to mean
+anything — `80/80` passes at both 375x812 and 1280x800.
+
 ## Managing parts
 
 **Parts** opens a list of everything in the model: colour, name, triangle count,
@@ -258,7 +271,7 @@ would notice breaking: a dragged part stays pinned to the finger to under a
 pixel, a 2x pinch gives exactly 2x, a 90 degree twist gives exactly 90 degrees,
 undo lands exactly back where it started, carve/join conserve every triangle and
 cost exactly one undo step, and a `pointercancel` leaves no phantom pointers.
-78 checks, including touch-to-select, the parts list, stance and drop-to-plate: a held piece is always a part of the
+80 checks, including touch-to-select, the parts list, stance, drop-to-plate and on-screen reachability: a held piece is always a part of the
 model rather than all of it, the drag ladder never shrinks as you pull outward,
 taking a piece conserves every triangle and costs exactly one undo step, bulk
 delete and bulk merge each cost one undo step, deleting every part is refused,

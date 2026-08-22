@@ -494,6 +494,39 @@ export async function run({ verbose = true } = {}) {
     document.getElementById('stancedone').click();
   }
 
+  // ------------------------------------------------------------ reachability --
+  {
+    // Every control has to be ON SCREEN. The top bar used to be flex-wrap:nowrap,
+    // so on a phone Fit/Save/Open/Stance sat past the right edge with no scroll
+    // and no hint they existed. Run the suite at a phone width to mean anything.
+    const usable = el => {
+      const drawer = el.closest('#partspanel');
+      if (drawer && !drawer.classList.contains('show')) return false; // closed by design
+      if (el.closest('#drop') || el.closest('#sheet')) return false;  // overlays
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const past = [...document.querySelectorAll('button, .chip')].filter(usable).filter(el => {
+      const r = el.getBoundingClientRect();
+      return r.right > innerWidth + 0.5 || r.left < -0.5;
+    });
+    ok(past.length === 0,
+      `no control sits off the side of a ${innerWidth}px screen` +
+      (past.length ? ` — ${past.map(b => b.id || b.textContent.trim()).join(', ')}` : ''));
+    ok(document.documentElement.scrollWidth <= innerWidth + 0.5,
+      `the page never scrolls sideways (${document.documentElement.scrollWidth} <= ${innerWidth})`);
+
+    // and the same with a piece held, which is when the most controls are up
+    const bar = document.getElementById('pickbar');
+    if (bar && bar.style.display !== 'none') {
+      const barPast = [...bar.querySelectorAll('button')].filter(b => {
+        const r = b.getBoundingClientRect();
+        return r.width > 0 && (r.right > innerWidth + 0.5 || r.left < -0.5);
+      });
+      ok(barPast.length === 0, 'every action on a held piece is reachable');
+    }
+  }
+
   // ----------------------------------------------------------- cancel/escape --
   {
     doc.select(biggest().id);

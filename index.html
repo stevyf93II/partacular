@@ -18,7 +18,7 @@
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
   #app { position:fixed; inset:0; touch-action:none; }
   canvas { display:block; }
-  .topbar { position:fixed; top:0; left:0; right:0; display:flex; align-items:center; gap:8px; flex-wrap:nowrap;
+  .topbar { position:fixed; top:0; left:0; right:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     padding:calc(env(safe-area-inset-top) + 10px) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
     pointer-events:none; z-index:10; min-width:0; }
   .topbar > * { pointer-events:auto; }
@@ -35,14 +35,17 @@
     display:flex; flex-direction:column; gap:10px; pointer-events:none; }
   .bottombar > * { pointer-events:auto; }
   .explode-row { display:flex; align-items:center; gap:12px; background:var(--panel); border:1px solid #2a3140;
-    border-radius:14px; padding:10px 14px; }
+    border-radius:14px; padding:10px 14px; flex-wrap:wrap; }
   .explode-row label { font-size:12px; color:var(--dim); font-weight:700; letter-spacing:.08em; }
   input[type=range] { flex:1; accent-color:var(--accent); height:28px; }
-  .axisrow { display:flex; align-items:center; gap:10px; }
+  .axisrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .axisrow label { font-size:12px; color:var(--dim); font-weight:700; letter-spacing:.06em; width:44px; }
   .axisrow span { font-size:12px; color:var(--dim); width:52px; text-align:right; font-variant-numeric:tabular-nums; }
   .axisrow .sizename { width:auto; text-align:left; color:var(--text); font-size:13px; font-weight:700; }
   .axisrow button.btn { padding:6px 14px; font-size:13px; border-radius:10px; }
+  #pickbar .pname { font-size:13px; font-weight:700; white-space:nowrap; flex:0 1 auto; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; }
+  #pickbar { row-gap:8px; }
   #pill.hidden-for-size { display:none !important; }
   /* while a size slider is being dragged, ghost the whole bottom stack so the
      part stays visible through it */
@@ -76,11 +79,19 @@
   #undo { display:none; }
   #undo.show { display:inline-block; }
   input[type=file] { display:none; }
-  @media (max-width: 430px) {
-    .brand { font-size:13px; letter-spacing:.08em; }
-    .chip { font-size:11px; padding:5px 9px; }
-    .topbar button.btn { padding:8px 11px; font-size:13px; border-radius:10px; }
-    .topbar { gap:6px; }
+  @media (max-width: 560px) {
+    /* The wordmark was taking nearly half the width of a phone before a single
+       button got a look in. It shrinks; the controls are the point. */
+    .brand { font-size:12px; letter-spacing:.06em; }
+    .chip { font-size:11px; padding:4px 8px; }
+    .topbar button.btn { padding:8px 10px; font-size:12.5px; border-radius:10px; }
+    .topbar { gap:6px; row-gap:6px; padding-bottom:8px; }
+    /* The spacer would otherwise consume a whole wrapped row on its own. */
+    .topbar .spacer { display:none; }
+    /* One line for what is held, then the actions wrap under it. */
+    #pickbar .pname { flex:1 1 100%; }
+    #pickbar button.btn, #pickbar button { padding:8px 12px; font-size:13px; }
+    .axisrow .sizename { flex:1 1 100%; }
   }
   /* phones: keep the Size panel small — measured 16% of a 430px-wide screen
      (the pre-fix stack covered ~45% and buried the model) */
