@@ -5,6 +5,7 @@ import { initUI } from './ui/ui';
 import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometry/loaders';
 import { splitInWorker } from './geometry/splitClient';
 import { repairFromStroke } from './geometry/repair';
+import { clearPickIndexes, forgetPickIndex } from './geometry/pickClient';
 import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
 import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
 import { export3MFInWorker } from './geometry/printClient';
@@ -30,6 +31,9 @@ const ui = initUI(doc, {
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
   onCarve: () => startCarve(),
   onJoin: () => startJoin(),
+  onPickTake: () => takePickedPiece(),
+  onPickCancel: () => viewport.clearPick(),
+  onPickStep: d => { const p = viewport.currentPick(); if (p) viewport.setPickLevel(p.level + d); },
 });
 let modelName = 'model';
 let lastSplitUsed = false; // whether current parts came from the split pipeline
@@ -88,14 +92,65 @@ async function splitOrMerge() {
   if (!soup) { ui.showToast('Nothing to split yet'); return; }
   if (doc.count() > 1) {
     installParts([{ name: modelName, geometry: soup }]);
-    ui.showToast('Merged back to one piece');
+    viewport.setPickEnabled(true);
+    ui.showToast('Merged back to one piece — touch anywhere to pick a piece out');
   } else {
     ui.showToast('Splitting into parts…');
     await installSplit(soup, modelName);
     lastSplitUsed = true;
+    viewport.setPickEnabled(false);
     const n = doc.count();
     ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
   }
+}
+
+/* ---------------------------------------------------------- touch to select */
+
+const pickbar = document.getElementById('pickbar')!;
+const pickinfo = document.getElementById('pickinfo')!;
+
+viewport.onPick = state => {
+  if (!state) { pickbar.style.display = 'none'; return; }
+  pickbar.style.display = 'flex';
+  const levels = state.touch.levels.length - 1;
+  pickinfo.textContent =
+    `${state.triangles.toLocaleString()} triangles  ·  ${state.level}/${levels}`;
+  (document.getElementById('pickmore') as HTMLButtonElement).disabled = state.level >= levels;
+  (document.getElementById('pickless') as HTMLButtonElement).disabled = state.level <= 0;
+};
+
+// The shape analysis behind touch-select runs once per part and is slow on a
+// big model, so say what is happening rather than appearing to ignore the tap.
+viewport.onPickPending = (_partId, ready) => {
+  if (!ready) ui.showToast('Reading the shape — one moment, then touch again');
+  else ui.showToast('Ready — touch any part of the model');
+};
+
+/** Turn the held selection into its own part, ready to move. */
+function takePickedPiece() {
+  const pk = viewport.currentPick();
+  const mask = viewport.pickMask();
+  if (!pk || !mask) return;
+  const src = doc.get(pk.partId);
+  const geo = getGeometry(pk.partId);
+  if (!src || !geo) return;
+
+  // maskToPartition speaks the same { triGroup, groupCount } language the split
+  // pipeline does, so the piece is extracted by exactly the path a Carve uses.
+  const triGroup = new Uint32Array(mask.length);
+  let held = 0;
+  for (let t = 0; t < mask.length; t++) { triGroup[t] = mask[t] ? 1 : 0; held += mask[t]; }
+  if (held === 0 || held === mask.length) {
+    ui.showToast('That is the whole part — nothing to take out of it');
+    return;
+  }
+  viewport.clearPick();
+  forgetPickIndex(pk.partId); // the geometry is about to change under it
+  applyPartition(pk.partId, triGroup, 2, [`${src.name} rest`, 'Piece']);
+  // applyPartition selects the first meta; the piece is the interesting one.
+  const piece = doc.list().find(m => m.name === 'Piece');
+  if (piece) doc.select(piece.id);
+  ui.showToast('Taken — drag it, pinch to resize, twist to turn');
 }
 
 /** Replace one part with the pieces a repair produced. One undo step. */
@@ -297,7 +352,7 @@ async function installSplit(geometry: THREE.BufferGeometry, baseName: string) {
 }
 
 function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[]) {
-  doc.reset(); clearGeometries();
+  doc.reset(); clearGeometries(); clearPickIndexes();
   const metas: PartMeta[] = [];
   for (const p of parts) {
     const id = newId();
@@ -325,6 +380,7 @@ function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[])
   if (Number.isFinite(minY) && minY !== 0) for (const m of metas) m.transform.position[1] -= minY;
   doc.addParts(metas);
   viewport.fitCamera();
+  viewport.setPickEnabled(doc.count() === 1);
 }
 
 // Gesture regression tests, dev only: http://localhost:5199/?gtest=1

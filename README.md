@@ -7,6 +7,7 @@ Touch-first 3D part editor. Drop in a model, it splits into parts, tap a part to
 ## What it does
 
 - Upload GLB / GLTF / OBJ / STL (or hit "Try the demo")
+- **Touch any part of a fused model and it lifts out on its own** — see below
 - Multi-mesh files use their named nodes as parts; single-mesh files are split by connected components in a web worker
 - Tap a part to select (others dim; tap the same spot to cycle through stacked parts)
 - Drag the selected part to move it (screen-parallel plane — finger up = up)
@@ -15,6 +16,66 @@ Touch-first 3D part editor. Drop in a model, it splits into parts, tap a part to
 - **Carve** — draw on a part: a closed loop lifts that region out, a line straight
   across cuts it in two
 - **Join** — tap a second part to merge it into the selection
+
+## Touch to select
+
+Open a model, touch a part, and everything else drops away. No Split first, no
+setup, no settings. Drag up or down (or Less/More) to take more or less, then
+**Take piece** and it is a part you can drag, pinch, twist, recolour and print.
+
+Measured on `reference/diablo.glb`, a 1,983,448-triangle fused AI car body,
+against the accepted 25-part segmentation:
+
+| touch | you get | |
+|---|---|---|
+| the door | 87,843 tris | 100% of the door, 5% spill |
+| a wheel | 129,032 tris | 100% of the wheel, **0% spill** |
+| the bodywork | 116,448 tris | a panel, with a ladder out to the whole body |
+
+### Why this works when tuning never did
+
+Segmenting a whole model up front forces every boundary in it to be decided
+before anyone has touched anything, from parameters that must suit every model
+at once. That is not achievable, and when it is wrong you get a "part" that is
+**69% of a car** — which is what the accepted output does for the bodywork.
+
+Touching inverts it. Nothing is decided until a finger lands, and then only
+locally.
+
+Two earlier attempts died against the real model and are worth recording:
+
+1. **Flood across triangles from the touch, stopping at creases.** It snaps from
+   407 triangles to the entire car between 15° and 20° — there is no threshold
+   that gets the door. The reason is at the top of `segment.ts`: crease loops on
+   AI meshes never close, so one leak floods everything. This is exactly why the
+   file uses a watershed.
+2. **Loosen the global merge threshold.** Fixes a synthetic two-lobe case and
+   splits the real door into its inner and outer skin. See the `peanut` gap.
+
+What does work is the pipeline's own **basins** — the watershed's intermediate
+regions, closed by construction. Measured against the accepted output, **99% of
+basins fall cleanly inside or outside a real part**, and the door is exactly 7
+of them. The basins were never the problem; the merging that follows is.
+
+So `pick.ts` keeps them, clusters them once into a **merge tree** ordered by how
+strong the boundary between them is, and lets the finger choose the level.
+Touching gives a chain of nested regions from "the basin I touched" out to
+"everything"; dragging slides along it. Two rules do the rest:
+
+- stop where boundary strength jumps — a part ends where the seam gets hard
+- **never** cross a disconnected boundary automatically; a wheel sitting next to
+  a body was never what a touch meant
+
+`segment.ts` gained an optional `SegmentTrace` out-parameter to hand the basins
+out. It is a pure observer — nothing reads it back — and the gate proves the
+shipped fingerprint is unchanged (`3f34865dabf9`).
+
+The analysis runs once per part in a worker (~17s on 2M triangles, instant
+after) and is cached. Growing afterwards costs the size of the region, not the
+model.
+
+**Split is unchanged.** Before Split, a tap picks a piece; after Split, a tap
+selects parts exactly as before. Merging back re-enables picking.
 
 ## Repair, not perfection
 
@@ -48,6 +109,8 @@ three.js, same rule as `split.ts`.
 - `src/viewport/` — renderer, camera, gesture router (tap/drag/pinch vs camera), selection styling
 - `src/ui/` — DOM chrome: pill, explode slider, toasts
 - `src/geometry/repair.ts` — lasso / cut / merge maths (pure, node-tested)
+- `src/geometry/pick.ts` — basin graph + merge tree behind touch-to-select (pure)
+- `src/geometry/pick.worker.ts` / `pickClient.ts` — the per-part index, off-thread and cached
 
 Every part's geometry is re-pivoted to its bounding-box center on import; the document transform carries position/rotationY/scale. Never leave pivots at the world origin.
 
@@ -77,7 +140,10 @@ would notice breaking: a dragged part stays pinned to the finger to under a
 pixel, a 2x pinch gives exactly 2x, a 90 degree twist gives exactly 90 degrees,
 undo lands exactly back where it started, carve/join conserve every triangle and
 cost exactly one undo step, and a `pointercancel` leaves no phantom pointers.
-33 checks. The suite is stripped from production builds by `import.meta.env.DEV`.
+46 checks, including touch-to-select: a held piece is always a part of the
+model rather than all of it, the drag ladder never shrinks as you pull outward,
+taking a piece conserves every triangle and costs exactly one undo step. The
+suite is stripped from production builds by `import.meta.env.DEV`.
 
 ## The segmentation gate
 
@@ -148,9 +214,10 @@ in `npm run preview` before believing any number.
 
 Part *count* is the wrong measure. What matters is whether touching a thing
 gives you that thing, and by that measure the accepted output is not good
-either: the largest part is **1,369,030 triangles, 69% of the whole car**. Touch
-the bodywork and you select most of the vehicle. Both behaviours fail the same
-bar, which is why the answer is not to keep tuning between them.
+either: the largest part is **1,369,030 triangles, 69% of the whole car**.
+
+That is what Touch to select answers, and it is why this gap can stay open. The
+global segmentation no longer has to be right for touching a part to work.
 
 ### What changed, and why
 
@@ -177,9 +244,11 @@ Deploys to Netlify (site: partacular) — `netlify.toml` builds `npm run build`,
 - Phase 3: duplicate, recolor, export GLB/STL
 - Phase 4 (shipped): print path — Manifold merge to watertight, 3MF export, PWA install
 - Phase 5 (shipped): Carve / Join repair gestures, corpus gate, gesture test suite
+- Phase 6 (shipped): Touch to select — basin merge tree, per-touch selection
 - Next: grow the corpus as real models expose new failures; carve currently
   partitions at triangle resolution (no re-triangulation across the cut), which
-  is invisible on dense meshes and rough on coarse ones
+  is invisible on dense meshes and rough on coarse ones; the first touch on a
+  big part waits on a ~17s worker pass that could start at load time instead
 
 ## Icons
 

@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { Document } from '../core/document';
 import { getGeometry } from '../geometry/store';
+import { PickIndex, Touched, cachedPickIndex, maskFor, pickIndexFor, touchAt } from '../geometry/pickClient';
 
 // BVH-accelerated raycasting: without this, every tap tests every triangle —
 // a 2M-tri AI scan made selection take hundreds of ms per pointer event
@@ -13,7 +14,19 @@ THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 interface PartVisual { mesh: THREE.Mesh; baseCenter: THREE.Vector3; explodeDir: THREE.Vector3; }
 
-type GestureMode = 'none' | 'camera' | 'move' | 'pinch' | 'stroke';
+type GestureMode = 'none' | 'camera' | 'move' | 'pinch' | 'stroke' | 'picking';
+
+/** A live touch-selection: what was touched, and how far out it has been grown. */
+export interface PickState {
+  partId: string;
+  index: PickIndex;
+  touch: Touched;
+  level: number;
+  triangles: number;
+}
+
+/** Above this the highlight overlay is not worth building; the whole part lights instead. */
+const HIGHLIGHT_CAP = 800_000;
 
 /** A repair the user armed from the UI but has not yet drawn or picked. */
 type RepairMode =
@@ -39,6 +52,15 @@ export class Viewport {
   private octx!: CanvasRenderingContext2D;
   private repairMode: RepairMode = null;
   private strokePx: number[] = [];
+
+  // touch-to-select
+  private pick: PickState | null = null;
+  private highlight: THREE.Mesh | null = null;
+  private pickLevelAtGrab = 0;
+  /** told when the live selection changes, so the UI can show what is held */
+  onPick: (state: PickState | null) => void = () => {};
+  /** told when a part's index has to be built first (slow, once per part) */
+  onPickPending: (partId: string, ready: boolean) => void = () => {};
 
   // gesture state
   private pointers = new Map<number, { x: number; y: number }>();
@@ -243,6 +265,134 @@ export class Viewport {
     return ids;
   }
 
+  /** First hit with its triangle index — touch-select needs to know WHICH triangle. */
+  private raycastFace(x: number, y: number): { partId: string; face: number } | null {
+    const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const meshes = [...this.visuals.values()].filter(v => v.mesh.visible).map(v => v.mesh);
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    if (!hit || hit.faceIndex == null) return null;
+    return { partId: (hit.object as THREE.Mesh).userData.partId, face: hit.faceIndex };
+  }
+
+  // ---------- touch to select ----------
+
+  /**
+   * Whether a tap reaches INTO a part or just selects it.
+   *
+   * Split is the switch. Before it, the model is one fused mass and "select the
+   * whole thing" says nothing, so a tap must mean a piece of it. After Split the
+   * parts are real and a tap selects them, exactly as it always did.
+   *
+   * Deliberately not keyed on part count: taking a piece out leaves two parts
+   * but the remainder is still a fused mass, and tapping it again has to keep
+   * working.
+   */
+  private pickEnabled = true;
+  setPickEnabled(on: boolean) {
+    this.pickEnabled = on;
+    if (!on) this.clearPick();
+  }
+  private wantsPick(_partId: string): boolean { return this.pickEnabled; }
+
+  private beginPick(partId: string, face: number) {
+    const index = cachedPickIndex(partId);
+    if (!index) {
+      // First touch on this part: the analysis is slow, so kick it off and say so.
+      const geo = getGeometry(partId);
+      if (!geo) return;
+      this.onPickPending(partId, false);
+      pickIndexFor(partId, geo)
+        .then(() => this.onPickPending(partId, true))
+        .catch(err => { console.error(err); this.onPickPending(partId, true); });
+      return;
+    }
+    const touch = touchAt(index, face);
+    if (!touch) return;
+    this.pick = { partId, index, touch, level: touch.level, triangles: 0 };
+    this.pickLevelAtGrab = touch.level;
+    this.applyPick();
+  }
+
+  /** Grow or shrink the held selection. */
+  setPickLevel(level: number) {
+    if (!this.pick) return;
+    const clamped = Math.max(0, Math.min(this.pick.touch.levels.length - 1, level));
+    if (clamped === this.pick.level) return;
+    this.pick.level = clamped;
+    this.applyPick();
+  }
+
+  clearPick() {
+    if (this.highlight) {
+      this.scene.remove(this.highlight);
+      this.highlight.geometry.dispose();
+      (this.highlight.material as THREE.Material).dispose();
+      this.highlight = null;
+    }
+    this.pick = null;
+    this.applySelectionStyle();
+    this.onPick(null);
+  }
+
+  currentPick(): PickState | null { return this.pick; }
+
+  /** The held selection as a triangle mask, for turning it into a real part. */
+  pickMask(): Uint8Array | null {
+    if (!this.pick) return null;
+    return maskFor(this.pick.index, this.pick.touch, this.pick.level);
+  }
+
+  private applyPick() {
+    const pk = this.pick;
+    if (!pk) return;
+    const mask = maskFor(pk.index, pk.touch, pk.level);
+    let count = 0;
+    for (let i = 0; i < mask.length; i++) count += mask[i];
+    pk.triangles = count;
+
+    if (this.highlight) {
+      this.scene.remove(this.highlight);
+      this.highlight.geometry.dispose();
+      (this.highlight.material as THREE.Material).dispose();
+      this.highlight = null;
+    }
+
+    const v = this.visuals.get(pk.partId);
+    const base = getGeometry(pk.partId);
+    if (!v || !base) return;
+
+    // Everything not held drops back; the held piece is the only lit thing.
+    for (const [id, vis] of this.visuals) {
+      const mat = vis.mesh.material as THREE.MeshStandardMaterial;
+      mat.opacity = id === pk.partId ? 0.16 : 0.1;
+      mat.emissive.setHex(0x000000);
+    }
+
+    if (count > 0 && count <= HIGHLIGHT_CAP) {
+      const geo = subsetGeometry(base, mask, count);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0x4da3ff, roughness: 0.5, metalness: 0.1,
+        emissive: 0x143a66, side: THREE.DoubleSide,
+        // The overlay is a copy of triangles that are still in the base mesh, so
+        // it is exactly coplanar with them. Without a depth bias the two fight
+        // for every pixel and the selection reads as torn.
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      }));
+      mesh.position.copy(v.mesh.position);
+      mesh.rotation.copy(v.mesh.rotation);
+      mesh.scale.copy(v.mesh.scale);
+      this.scene.add(mesh);
+      this.highlight = mesh;
+    } else if (count > HIGHLIGHT_CAP) {
+      // Too big to be worth a copy: light the whole part instead of an overlay.
+      const mat = v.mesh.material as THREE.MeshStandardMaterial;
+      mat.opacity = 1;
+      mat.emissive.setHex(0x143a66);
+    }
+    this.onPick(pk);
+  }
+
   private planeHit(x: number, y: number, out: THREE.Vector3): boolean {
     const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
@@ -273,6 +423,25 @@ export class Viewport {
       this.downX = e.clientX; this.downY = e.clientY; this.downT = performance.now(); this.moved = false;
       const sel = this.doc.selectedId;
       const hits = this.raycastAt(e.clientX, e.clientY);
+
+      // A held selection takes the gesture: drag adjusts how much is held.
+      if (this.pick && hits.includes(this.pick.partId)) {
+        this.mode = 'picking';
+        this.controls.enabled = false;
+        this.pickLevelAtGrab = this.pick.level;
+        return;
+      }
+
+      if (hits.length && !sel && this.wantsPick(hits[0])) {
+        const face = this.raycastFace(e.clientX, e.clientY);
+        if (face) {
+          this.mode = 'picking';
+          this.controls.enabled = false;
+          this.beginPick(face.partId, face.face);
+          return;
+        }
+      }
+
       if (sel && hits.includes(sel)) {
         // start MOVE on the selected part
         this.mode = 'move';
@@ -305,6 +474,11 @@ export class Viewport {
     const p = this.pointers.get(e.pointerId); if (!p) return;
     p.x = e.clientX; p.y = e.clientY;
     if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 8) this.moved = true;
+    if (this.mode === 'picking') {
+      // Up grows, down shrinks. One rung per 44px is about a thumb's travel.
+      if (this.pick) this.setPickLevel(this.pickLevelAtGrab + Math.round((this.downY - e.clientY) / 44));
+      return;
+    }
     if (this.mode === 'stroke') {
       const n = this.strokePx.length;
       // Drop samples closer than 2px: they add cost and jitter, not shape.
@@ -341,6 +515,12 @@ export class Viewport {
       if (this.pointers.size > 0) return;
       this.mode = 'none';
       this.finishStroke();
+      return;
+    }
+    if (this.mode === 'picking') {
+      if (this.pointers.size > 0) return;
+      this.mode = 'none';
+      this.controls.enabled = true;
       return;
     }
     if (this.pointers.size > 0) {
@@ -391,6 +571,7 @@ export class Viewport {
 
   // ---------- visuals ----------
   private clearVisuals() {
+    if (this.pick) this.clearPick();
     for (const v of this.visuals.values()) { this.scene.remove(v.mesh); (v.mesh.material as THREE.Material).dispose(); }
     this.visuals.clear();
   }
@@ -410,6 +591,7 @@ export class Viewport {
   }
 
   private removeVisual(id: string) {
+    if (this.pick && this.pick.partId === id) this.clearPick();
     const v = this.visuals.get(id); if (!v) return;
     this.scene.remove(v.mesh); this.visuals.delete(id);
     this.applySelectionStyle();
@@ -479,6 +661,10 @@ export class Viewport {
 
   private handleTap(x: number, y: number) {
     const hitIds = this.raycastAt(x, y);
+    if (this.pick && (hitIds.length === 0 || !hitIds.includes(this.pick.partId))) {
+      this.clearPick();
+      if (hitIds.length === 0) return;
+    }
     const mode = this.repairMode;
     if (mode && mode.kind === 'merge') {
       const other = hitIds.find(id => id !== this.doc.selectedId);
@@ -495,6 +681,7 @@ export class Viewport {
   }
 
   private applySelectionStyle() {
+    if (this.pick) return; // a held touch-selection owns the styling
     const sel = this.doc.selectedId;
     for (const [id, v] of this.visuals) {
       const mat = v.mesh.material as THREE.MeshStandardMaterial;
@@ -503,4 +690,23 @@ export class Viewport {
       else { mat.opacity = 0.22; mat.emissive.setHex(0x000000); }
     }
   }
+}
+
+/** The masked triangles of a geometry, copied out as a standalone soup. */
+function subsetGeometry(src: THREE.BufferGeometry, mask: Uint8Array, count: number): THREE.BufferGeometry {
+  const pos = src.getAttribute('position') as THREE.BufferAttribute;
+  const index = src.getIndex();
+  const out = new Float32Array(count * 9);
+  let o = 0;
+  for (let t = 0; t < mask.length; t++) {
+    if (!mask[t]) continue;
+    for (let c = 0; c < 3; c++) {
+      const v = index ? index.getX(t * 3 + c) : t * 3 + c;
+      out[o++] = pos.getX(v); out[o++] = pos.getY(v); out[o++] = pos.getZ(v);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(out, 3));
+  g.computeVertexNormals();
+  return g;
 }

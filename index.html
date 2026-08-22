@@ -109,6 +109,15 @@
     <button class="btn" id="openbtn">Open</button>
   </div>
   <div class="bottombar">
+    <!-- Touch-select: what is currently held, and the one action on it. -->
+    <div id="pickbar" class="explode-row" style="display:none">
+      <div class="pname" id="pickinfo">piece</div>
+      <button class="hide" id="pickless">Less</button>
+      <button class="hide" id="pickmore">More</button>
+      <button class="btn primary" id="picktake">Take piece</button>
+      <button class="hide" id="pickcancel">Cancel</button>
+    </div>
+
     <div id="pill" class="explode-row">
       <div class="pname" id="pillname">part</div>
       <button id="pillcolor" title="Change color"></button>

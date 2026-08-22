@@ -37,11 +37,41 @@ export function assertSegmentConfig(cfg: Partial<SegmentConfig> | undefined): as
   }
 }
 
+/**
+ * Intermediates the pipeline computes on its way to a final answer.
+ *
+ * The BASINS are the valuable part. They are closed by construction -- the
+ * reason this file uses a watershed at all -- and measured against the accepted
+ * 25-part output on diablo.glb, 99% of them fall cleanly inside or outside a
+ * real part boundary; the door is exactly 7 of them. What loses that structure
+ * is the merging that follows, which collapses them with one global threshold
+ * that has to be right for every seam in the model at once.
+ *
+ * Handing the basins out lets selection be decided per touch instead: start at
+ * the basin under the finger and absorb neighbours outward. Nothing here is
+ * read back by the pipeline, so capturing it cannot change what ships.
+ */
+export interface SegmentTrace {
+  /** proxy face count (post-decimation) */
+  nTri: number;
+  /** basin id per proxy face, BEFORE boundary-strength and thinness merging */
+  basins: Int32Array;
+  /** proxy face adjacency */
+  adj: number[][];
+  /** [faceA, faceB, vertA, vertB] per shared edge */
+  edgeInfo: [number, number, number, number][];
+  /** concave angle (radians, 0 when convex/flat) per entry of edgeInfo */
+  edgeConc: Float32Array;
+  /** which proxy face each full-resolution triangle was assigned to */
+  proxyOf: Int32Array;
+}
+
 /** Segment a triangle soup; returns per-triangle group labels (0..groupCount-1). */
 export function watershedSegment(
   simplifier: SimplifierLike,
   soup: Float32Array,
   cfg: SegmentConfig,
+  trace?: Partial<SegmentTrace>,
 ): { triGroup: Uint32Array; groupCount: number } {
   assertSegmentConfig(cfg);
   const persist = (cfg.persistDeg * Math.PI) / 180;
@@ -198,6 +228,15 @@ export function watershedSegment(
     }
   }
 
+  // Basins are at their most useful right here: closed, and not yet collapsed.
+  if (trace) {
+    trace.nTri = nTri;
+    trace.basins = new Int32Array(label);
+    trace.adj = adj;
+    trace.edgeInfo = edgeInfo;
+    trace.edgeConc = edgeConc;
+  }
+
   // ---- boundary-strength merging: only sharp CONCAVE grooves justify a part
   // boundary. Region pairs whose shared boundary is convex or gentle merge —
   // this glues a panel's inner+outer skins (convex rim) and arbitrary patch
@@ -275,8 +314,15 @@ export function watershedSegment(
   const triGroup = new Uint32Array(fullTris);
   if (di === wi) {
     for (let k = 0; k < fullTris; k++) triGroup[k] = remap.get(label[k])!;
+    if (trace) {
+      // No decimation happened, so full-res triangles ARE the proxy faces.
+      const identity = new Int32Array(fullTris);
+      for (let k = 0; k < fullTris; k++) identity[k] = k;
+      trace.proxyOf = identity;
+    }
     return { triGroup, groupCount };
   }
+  const proxyOf = trace ? new Int32Array(fullTris).fill(-1) : null;
   // grid hash
   let mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
   for (let k = 0; k < nTri; k++) {
@@ -331,7 +377,10 @@ export function watershedSegment(
     }
     const pick = best >= 0 ? best : bestAny;
     triGroup[k] = pick >= 0 ? remap.get(label[pick])! : 0;
+    if (proxyOf) proxyOf[k] = pick;
   }
+
+  if (trace && proxyOf) trace.proxyOf = proxyOf;
 
   // ---- majority-vote smoothing at full res: the nearest-centroid transfer
   // speckles at region borders; specks would float when their part moves. ----

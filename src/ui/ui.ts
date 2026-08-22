@@ -11,6 +11,9 @@ export interface UIHooks {
   onSplitToggle: () => void;
   onCarve: () => void;
   onJoin: () => void;
+  onPickTake: () => void;
+  onPickCancel: () => void;
+  onPickStep: (delta: number) => void;
 }
 
 export function initUI(doc: Document, hooks: UIHooks) {
@@ -33,6 +36,10 @@ export function initUI(doc: Document, hooks: UIHooks) {
 
   $('pilldel').addEventListener('click', () => { if (doc.selectedId) doc.deletePart(doc.selectedId); });
   $('pillrot').addEventListener('click', () => hooks.onRotate());
+  $('picktake').addEventListener('click', () => hooks.onPickTake());
+  $('pickcancel').addEventListener('click', () => hooks.onPickCancel());
+  $('pickmore').addEventListener('click', () => hooks.onPickStep(1));
+  $('pickless').addEventListener('click', () => hooks.onPickStep(-1));
   $('pillcarve').addEventListener('click', () => hooks.onCarve());
   $('pilljoin').addEventListener('click', () => hooks.onJoin());
   $('pillcopy').addEventListener('click', () => hooks.onDuplicate());

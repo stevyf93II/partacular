@@ -263,6 +263,63 @@ export async function run({ verbose = true } = {}) {
     ok(doc.count() === before, 'a join is ONE undo step');
   }
 
+  // ---------------------------------------------------------- touch to select --
+  {
+    // Split toggles: with several parts it merges back to one fused mass, which
+    // is the state touch-select is for.
+    document.getElementById('splitbtn').click();
+    await sleep(300);
+    ok(doc.count() === 1, `merged back to one fused part (${doc.count()})`);
+
+    const whole = doc.list()[0];
+    doc.select(null);
+    const hit = surfacePoint(whole.id);
+    ok(!!hit, 'found a point on the fused model');
+
+    // First touch builds the shape index; it is async, so wait for it.
+    fire('pointerdown', 1, hit.x, hit.y);
+    fire('pointerup', 1, hit.x, hit.y);
+    const { cachedPickIndex } = await import('/src/geometry/pickClient.ts');
+    for (let i = 0; i < 200 && !cachedPickIndex(whole.id); i++) await sleep(50);
+    const index = cachedPickIndex(whole.id);
+    ok(!!index, `shape index built (${index ? index.basinCount : 0} basins)`);
+
+    fire('pointerdown', 1, hit.x, hit.y);
+    fire('pointerup', 1, hit.x, hit.y);
+    await sleep(80);
+    const pk = vp.currentPick();
+    ok(!!pk, 'touching a fused model holds a piece of it, not the whole thing');
+    ok(!!pk && pk.triangles > 0 && pk.triangles < whole.triCount,
+      `held piece is a PART of the model (${pk ? pk.triangles : 0} of ${whole.triCount})`);
+
+    // Growing must be monotonic -- a ladder that shrinks under your finger is
+    // impossible to aim.
+    const sizes = [];
+    for (let L = 0; L < Math.min(pk.touch.levels.length, 5); L++) {
+      vp.setPickLevel(L);
+      sizes.push(vp.currentPick().triangles);
+    }
+    ok(sizes.every((v, i) => i === 0 || v >= sizes[i - 1]),
+      `each rung holds at least as much as the last (${sizes.join(' -> ')})`);
+    ok(sizes[sizes.length - 1] > sizes[0], 'dragging out really does grow it');
+
+    // Taking it makes a real part that behaves like any other.
+    vp.setPickLevel(pk.touch.level);
+    const held = vp.currentPick().triangles;
+    const before = doc.count();
+    document.getElementById('picktake').click();
+    await sleep(300);
+    ok(doc.count() === before + 1, `Take piece: ${before} -> ${doc.count()} parts`);
+    const piece = doc.list().find(p => p.name === 'Piece');
+    ok(!!piece && piece.triCount === held, `the taken part is exactly what was held (${held})`);
+    ok(doc.selectedId === (piece && piece.id), 'the taken piece is selected, ready to move');
+    ok(triTotal() === startTris, `taking a piece conserves every triangle (${triTotal()})`);
+    ok(!vp.currentPick(), 'the hold is released once taken');
+
+    doc.undo(); await sleep(150);
+    ok(doc.count() === before, 'taking a piece is ONE undo step');
+  }
+
   // ----------------------------------------------------------- cancel/escape --
   {
     doc.select(biggest().id);
