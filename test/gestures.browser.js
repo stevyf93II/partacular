@@ -18,6 +18,9 @@ export async function run({ verbose = true } = {}) {
   if (!P) throw new Error('app handle missing — is this the dev build?');
   const { doc, viewport: vp } = P;
   const results = [];
+  // Exposed while running, not just at the end: a suite that hangs is far more
+  // useful if you can see which check it got to.
+  window.__gtestProgress = results;
   const ok = (pass, msg) => { results.push({ pass, msg }); if (verbose) console.log((pass ? '%cPASS' : '%cFAIL') + ` ${msg}`, `color:${pass ? '#62d29a' : '#ff6b6b'}`); };
   const near = (got, want, tol, msg) => ok(Math.abs(got - want) <= tol, `${msg} (got ${round(got)}, want ${round(want)}±${tol})`);
   const round = n => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n);
@@ -279,10 +282,11 @@ export async function run({ verbose = true } = {}) {
     // First touch builds the shape index; it is async, so wait for it.
     fire('pointerdown', 1, hit.x, hit.y);
     fire('pointerup', 1, hit.x, hit.y);
-    const { cachedPickIndex } = await import('/src/geometry/pickClient.ts');
-    for (let i = 0; i < 200 && !cachedPickIndex(whole.id); i++) await sleep(50);
-    const index = cachedPickIndex(whole.id);
-    ok(!!index, `shape index built (${index ? index.basinCount : 0} basins)`);
+    // Read the cache through the APP's module instance; importing the module
+    // by path in dev gives a fresh copy whose cache is always empty.
+    for (let i = 0; i < 300 && !P.cachedPickIndex(whole.id); i++) await sleep(50);
+    const index = P.cachedPickIndex(whole.id);
+    ok(!!index, `shape index built (${index ? index.graph.count : 0} basins)`);
 
     fire('pointerdown', 1, hit.x, hit.y);
     fire('pointerup', 1, hit.x, hit.y);
@@ -295,7 +299,7 @@ export async function run({ verbose = true } = {}) {
     // Growing must be monotonic -- a ladder that shrinks under your finger is
     // impossible to aim.
     const sizes = [];
-    for (let L = 0; L < Math.min(pk.touch.levels.length, 5); L++) {
+    for (let L = 0; L < Math.min(pk.touch.ladder.order.length, 5); L++) {
       vp.setPickLevel(L);
       sizes.push(vp.currentPick().triangles);
     }
@@ -304,7 +308,7 @@ export async function run({ verbose = true } = {}) {
     ok(sizes[sizes.length - 1] > sizes[0], 'dragging out really does grow it');
 
     // Taking it makes a real part that behaves like any other.
-    vp.setPickLevel(pk.touch.level);
+    vp.setPickLevel(pk.touch.rung);
     const held = vp.currentPick().triangles;
     const before = doc.count();
     document.getElementById('picktake').click();

@@ -17,6 +17,8 @@ export interface UIHooks {
   onBulkMerge: () => void;
   onSelectTiny: () => void;
   onPickTake: () => void;
+  onPickDelete: () => void;
+  onPickColor: () => void;
   onPickCancel: () => void;
   onPickStep: (delta: number) => void;
 }
@@ -42,6 +44,8 @@ export function initUI(doc: Document, hooks: UIHooks) {
   $('pilldel').addEventListener('click', () => { if (doc.selectedId) doc.deletePart(doc.selectedId); });
   $('pillrot').addEventListener('click', () => hooks.onRotate());
   $('picktake').addEventListener('click', () => hooks.onPickTake());
+  $('pickdelete').addEventListener('click', () => hooks.onPickDelete());
+  $('pickcolor').addEventListener('click', () => hooks.onPickColor());
   $('pickcancel').addEventListener('click', () => hooks.onPickCancel());
   $('pickmore').addEventListener('click', () => hooks.onPickStep(1));
   $('pickless').addEventListener('click', () => hooks.onPickStep(-1));

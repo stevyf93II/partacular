@@ -5,7 +5,7 @@ import { initUI } from './ui/ui';
 import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometry/loaders';
 import { splitInWorker } from './geometry/splitClient';
 import { repairFromStroke } from './geometry/repair';
-import { clearPickIndexes, forgetPickIndex, pickIndexFor } from './geometry/pickClient';
+import { cachedPickIndex, clearPickIndexes, forgetPickIndex, pickIndexFor } from './geometry/pickClient';
 import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
 import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
 import { export3MFInWorker } from './geometry/printClient';
@@ -16,7 +16,10 @@ export const PALETTE = [0x4da3ff, 0xffb347, 0x7ee081, 0xff7eb6, 0xb59bff, 0x6be2
 const doc = new Document();
 const viewport = new Viewport(document.getElementById('app')!, doc);
 // Debug/automation handle — lets tests drive the real app from the console.
-(window as unknown as Record<string, unknown>).__partacular = { doc, viewport };
+// Exposed for the gesture suite. cachedPickIndex has to come from HERE rather
+// than a fresh import: in dev, importing the module by path yields a separate
+// instance with its own empty cache, so a test would never see the app's index.
+(window as unknown as Record<string, unknown>).__partacular = { doc, viewport, cachedPickIndex };
 let idSeq = 0;
 const newId = () => `p${++idSeq}`;
 
@@ -36,7 +39,9 @@ const ui = initUI(doc, {
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
   onCarve: () => startCarve(),
   onJoin: () => startJoin(),
-  onPickTake: () => takePickedPiece(),
+  onPickTake: () => { takePickedPiece(); },
+  onPickDelete: () => deletePickedPiece(),
+  onPickColor: () => recolorPickedPiece(),
   onPickCancel: () => viewport.clearPick(),
   onPickStep: d => { const p = viewport.currentPick(); if (p) viewport.setPickLevel(p.level + d); },
 });
@@ -238,7 +243,7 @@ const pickinfo = document.getElementById('pickinfo')!;
 viewport.onPick = state => {
   if (!state) { pickbar.style.display = 'none'; return; }
   pickbar.style.display = 'flex';
-  const levels = state.touch.levels.length - 1;
+  const levels = state.touch.ladder.order.length - 1;
   pickinfo.textContent =
     `${state.triangles.toLocaleString()} triangles  ·  ${state.level}/${levels}`;
   (document.getElementById('pickmore') as HTMLButtonElement).disabled = state.level >= levels;
@@ -252,14 +257,40 @@ viewport.onPickPending = (_partId, ready) => {
   else ui.showToast('Ready — touch any part of the model');
 };
 
+// Grabbing the lit piece and dragging pulls it out in the same motion.
+viewport.onExtractRequest = () => takePickedPiece(true);
+
+/** Cut the held selection out of the model entirely. */
+function deletePickedPiece() {
+  const id = takePickedPiece(true);
+  if (!id) return;
+  const m = doc.get(id);
+  const tris = m ? m.triCount : 0;
+  // Extraction and removal read as one action, so they undo as one.
+  doc.beginBatch();
+  doc.deletePart(id);
+  doc.endBatch();
+  viewport.refreshModelBounds();
+  ui.showToast(`Deleted that piece (${tris.toLocaleString()} triangles) — Undo brings it back`);
+}
+
+/** Take the held selection out and give it the next colour. */
+function recolorPickedPiece() {
+  const id = takePickedPiece(true);
+  if (!id) return;
+  const m = doc.get(id);
+  if (!m) return;
+  doc.setColor(id, PALETTE[(PALETTE.indexOf(m.color) + 1) % PALETTE.length]);
+}
+
 /** Turn the held selection into its own part, ready to move. */
-function takePickedPiece() {
+function takePickedPiece(quiet = false): string | null {
   const pk = viewport.currentPick();
   const mask = viewport.pickMask();
-  if (!pk || !mask) return;
+  if (!pk || !mask) return null;
   const src = doc.get(pk.partId);
   const geo = getGeometry(pk.partId);
-  if (!src || !geo) return;
+  if (!src || !geo) return null;
 
   // maskToPartition speaks the same { triGroup, groupCount } language the split
   // pipeline does, so the piece is extracted by exactly the path a Carve uses.
@@ -267,8 +298,8 @@ function takePickedPiece() {
   let held = 0;
   for (let t = 0; t < mask.length; t++) { triGroup[t] = mask[t] ? 1 : 0; held += mask[t]; }
   if (held === 0 || held === mask.length) {
-    ui.showToast('That is the whole part — nothing to take out of it');
-    return;
+    if (!quiet) ui.showToast('That is the whole part — nothing to take out of it');
+    return null;
   }
   viewport.clearPick();
   forgetPickIndex(pk.partId); // the geometry is about to change under it
@@ -276,7 +307,8 @@ function takePickedPiece() {
   // applyPartition selects the first meta; the piece is the interesting one.
   const piece = doc.list().find(m => m.name === 'Piece');
   if (piece) doc.select(piece.id);
-  ui.showToast('Taken — drag it, pinch to resize, twist to turn');
+  if (!quiet) ui.showToast('Taken — drag it, pinch to resize, twist to turn');
+  return piece ? piece.id : null;
 }
 
 /** Replace one part with the pieces a repair produced. One undo step. */

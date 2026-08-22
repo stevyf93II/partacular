@@ -64,6 +64,15 @@ export interface SegmentTrace {
   edgeConc: Float32Array;
   /** which proxy face each full-resolution triangle was assigned to */
   proxyOf: Int32Array;
+  /**
+   * Full-resolution face adjacency, up to three neighbours per triangle.
+   *
+   * Built here anyway to de-speckle the transfer; handed out so basin labels
+   * can be cleaned the same way. Without it a touch-selection inherits the raw
+   * nearest-centroid speckle and comes back full of holes.
+   */
+  fullNb: Int32Array;
+  fullNbCount: Uint8Array;
 }
 
 /** Segment a triangle soup; returns per-triangle group labels (0..groupCount-1). */
@@ -405,6 +414,8 @@ export function watershedSegment(
         }
       }
     }
+    if (trace) { trace.fullNb = nb; trace.fullNbCount = nbCount; }
+
     for (let pass = 0; pass < 2; pass++) {
       const next = new Uint32Array(triGroup);
       for (let k = 0; k < fullTris; k++) {

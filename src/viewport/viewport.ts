@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { Document } from '../core/document';
 import { getGeometry } from '../geometry/store';
-import { PickIndex, Touched, cachedPickIndex, maskFor, pickIndexFor, touchAt } from '../geometry/pickClient';
+import { PickIndex, Touched, cachedPickIndex, maskFor, pickIndexFor, rungCount, touchAt } from '../geometry/pickClient';
 
 // BVH-accelerated raycasting: without this, every tap tests every triangle —
 // a 2M-tri AI scan made selection take hundreds of ms per pointer event
@@ -57,10 +57,20 @@ export class Viewport {
   private pick: PickState | null = null;
   private highlight: THREE.Mesh | null = null;
   private pickLevelAtGrab = 0;
+  /** finger landed on the lit piece; a drag from here pulls it out */
+  private pullArmed = false;
   /** told when the live selection changes, so the UI can show what is held */
   onPick: (state: PickState | null) => void = () => {};
   /** told when a part's index has to be built first (slow, once per part) */
   onPickPending: (partId: string, ready: boolean) => void = () => {};
+  /**
+   * Asked to turn the held selection into a real part, returning its id.
+   *
+   * Lives outside the viewport because it mutates the document, but has to be
+   * callable mid-gesture: grabbing a highlighted piece and pulling it away is
+   * one motion, not select-then-press-a-button-then-drag.
+   */
+  onExtractRequest: () => string | null = () => null;
 
   // gesture state
   private pointers = new Map<number, { x: number; y: number }>();
@@ -309,15 +319,15 @@ export class Viewport {
     }
     const touch = touchAt(index, face);
     if (!touch) return;
-    this.pick = { partId, index, touch, level: touch.level, triangles: 0 };
-    this.pickLevelAtGrab = touch.level;
+    this.pick = { partId, index, touch, level: touch.rung, triangles: 0 };
+    this.pickLevelAtGrab = touch.rung;
     this.applyPick();
   }
 
   /** Grow or shrink the held selection. */
   setPickLevel(level: number) {
     if (!this.pick) return;
-    const clamped = Math.max(0, Math.min(this.pick.touch.levels.length - 1, level));
+    const clamped = Math.max(0, Math.min(rungCount(this.pick.touch), level));
     if (clamped === this.pick.level) return;
     this.pick.level = clamped;
     this.applyPick();
@@ -393,6 +403,30 @@ export class Viewport {
     this.onPick(pk);
   }
 
+  /** Does this screen point land on the lit piece rather than the rest of the part? */
+  private hitsHighlight(x: number, y: number): boolean {
+    if (!this.highlight) return false;
+    const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.intersectObject(this.highlight, false).length > 0;
+  }
+
+  /** Start a move gesture on a part, as if the finger had landed on it. */
+  private beginMoveOn(id: string, x: number, y: number) {
+    const m = this.doc.get(id);
+    if (!m) { this.mode = 'camera'; return; }
+    this.doc.select(id);
+    this.mode = 'move';
+    this.controls.enabled = false;
+    const worldCenter = new THREE.Vector3(...m.transform.position);
+    const viewDir = new THREE.Vector3();
+    this.camera.getWorldDirection(viewDir);
+    this.dragPlane.setFromNormalAndCoplanarPoint(viewDir, worldCenter);
+    this.planeHit(x, y, this.dragStartHit);
+    this.dragStartPos = [...m.transform.position];
+    this.doc.beginTransform(id);
+  }
+
   private planeHit(x: number, y: number, out: THREE.Vector3): boolean {
     const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
@@ -403,6 +437,7 @@ export class Viewport {
     this.pointers.clear();
     if (this.mode === 'move' || this.mode === 'pinch') this.doc.endTransform();
     if (this.mode === 'stroke') { this.strokePx = []; this.clearOverlay(); }
+    this.pullArmed = false;
     this.mode = 'none';
     this.repairMode = null;
     this.controls.enabled = true;
@@ -424,15 +459,25 @@ export class Viewport {
       const sel = this.doc.selectedId;
       const hits = this.raycastAt(e.clientX, e.clientY);
 
-      // A held selection takes the gesture: drag adjusts how much is held.
+      // A held selection takes the gesture. Landing ON the lit piece pulls it
+      // out and drags it; landing on the rest of the part adjusts how much is
+      // held. Both start from the same touch, which is what "pull that piece
+      // away" has to mean.
       if (this.pick && hits.includes(this.pick.partId)) {
-        this.mode = 'picking';
         this.controls.enabled = false;
+        this.mode = 'picking';
         this.pickLevelAtGrab = this.pick.level;
+        // Landing on the lit piece ARMS a pull, but does not perform it: a tap
+        // has to leave the selection alone, or looking at what you have picked
+        // would keep tearing it out of the model.
+        this.pullArmed = !!this.highlight && this.hitsHighlight(e.clientX, e.clientY);
         return;
       }
 
-      if (hits.length && !sel && this.wantsPick(hits[0])) {
+      // Order matters. Dragging a part you already selected must still move it,
+      // so that check comes first; anything else on a fused model reaches INSIDE
+      // the part rather than selecting the whole of it.
+      if (!(sel && hits.includes(sel)) && hits.length && this.wantsPick(hits[0])) {
         const face = this.raycastFace(e.clientX, e.clientY);
         if (face) {
           this.mode = 'picking';
@@ -475,8 +520,19 @@ export class Viewport {
     p.x = e.clientX; p.y = e.clientY;
     if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 8) this.moved = true;
     if (this.mode === 'picking') {
-      // Up grows, down shrinks. One rung per 44px is about a thumb's travel.
-      if (this.pick) this.setPickLevel(this.pickLevelAtGrab + Math.round((this.downY - e.clientY) / 44));
+      if (!this.pick) return;
+      if (this.pullArmed) {
+        // Wait for a real drag before committing; below the slop this is still
+        // a tap that happened to land on the piece.
+        if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) < 8) return;
+        this.pullArmed = false;
+        const newId = this.onExtractRequest();
+        if (newId) { this.beginMoveOn(newId, this.downX, this.downY); this.onPointerMove(e); }
+        return;
+      }
+      // Up grows, down shrinks. A rung is now one neighbouring basin rather
+      // than a whole cluster, so the travel per rung is shorter to match.
+      this.setPickLevel(this.pickLevelAtGrab + Math.round((this.downY - e.clientY) / 22));
       return;
     }
     if (this.mode === 'stroke') {
@@ -520,6 +576,7 @@ export class Viewport {
     if (this.mode === 'picking') {
       if (this.pointers.size > 0) return;
       this.mode = 'none';
+      this.pullArmed = false;
       this.controls.enabled = true;
       return;
     }
@@ -665,6 +722,10 @@ export class Viewport {
       this.clearPick();
       if (hitIds.length === 0) return;
     }
+    // A tap that took hold of a piece has already said what it meant. Falling
+    // through would ALSO select the whole part, and then the next tap would try
+    // to move that part instead of reaching inside it again.
+    if (this.pick) return;
     const mode = this.repairMode;
     if (mode && mode.kind === 'merge') {
       const other = hitIds.find(id => id !== this.doc.selectedId);

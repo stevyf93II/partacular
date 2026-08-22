@@ -57,14 +57,41 @@ regions, closed by construction. Measured against the accepted output, **99% of
 basins fall cleanly inside or outside a real part**, and the door is exactly 7
 of them. The basins were never the problem; the merging that follows is.
 
-So `pick.ts` keeps them, clusters them once into a **merge tree** ordered by how
-strong the boundary between them is, and lets the finger choose the level.
-Touching gives a chain of nested regions from "the basin I touched" out to
-"everything"; dragging slides along it. Two rules do the rest:
+So `pick.ts` keeps them and grows outward from whichever basin the finger
+landed on, absorbing **one neighbour at a time** in order of how hard the
+boundary between it and the region already held is. Three rules do the rest:
 
 - stop where boundary strength jumps — a part ends where the seam gets hard
 - **never** cross a disconnected boundary automatically; a wheel sitting next to
   a body was never what a touch meant
+- **never let one rung swallow the model** — a small basin's weakest neighbour is
+  very often the huge one it is attached to, so oversized neighbours wait until
+  the smaller ones are taken. Without this, More went 6% → 32% in one press
+
+An earlier version clustered every basin bottom-up into a merge tree and read a
+chain out of it. The chain was useless to drag along: by the time it reached the
+touched basin it was swallowing clusters formed elsewhere in the model.
+
+### Not shattered
+
+Full-resolution triangles take their basin from the *nearest* proxy face, and
+across a 13:1 decimation that speckles catastrophically — measured on the car,
+36 basins arrived as **4,875 disconnected islands**, and a selection built on
+that comes back full of holes. `despeckle()` fixes it in three stages, each
+doing work the previous cannot:
+
+| stage | islands |
+|---|---|
+| raw transfer | 4,875 |
+| majority vote — single stray triangles | 3,687 |
+| island absorption — specks inside another region | 176 |
+| small sweep — the rest, whatever their label | **60** |
+
+The sweep matters because absorption protects the largest island of every label,
+so two small islands of different labels sitting side by side keep each other
+alive forever. The whole pass costs ~1s on two million triangles; written the
+obvious way, with a callback per triangle and a Map per island, it did not
+finish inside a minute.
 
 `segment.ts` gained an optional `SegmentTrace` out-parameter to hand the basins
 out. It is a pure observer — nothing reads it back — and the gate proves the
@@ -74,8 +101,14 @@ The analysis runs once per part in a worker (~17s on 2M triangles, instant
 after) and is cached. Growing afterwards costs the size of the region, not the
 model.
 
+Once a piece is held: **drag it** and it pulls out of the model and follows your
+finger in one motion; drag anywhere else on the part to take more or less;
+**Take piece**, **Colour** and **Delete** act on it directly.
+
 **Split is unchanged.** Before Split, a tap picks a piece; after Split, a tap
-selects parts exactly as before. Merging back re-enables picking.
+selects parts exactly as before. Merging back re-enables picking. Dragging a
+part you have already selected still moves it, so nothing that worked before
+stopped working.
 
 ## Managing parts
 

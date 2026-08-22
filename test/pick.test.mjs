@@ -1,13 +1,8 @@
-// Node test of the touch-to-select core: basin graph, merge tree, and the
-// level a touch lands on.
+// Node test of the touch-to-select core: basin graph, growth ladder, and the
+// rung a touch lands on.
 //
-// Build with:
-//   npx tsc src/geometry/pick.ts src/geometry/segment.ts src/geometry/split.ts \
-//     src/geometry/print.ts --ignoreConfig --outDir dist-test --target es2022 \
-//     --module esnext --moduleResolution bundler --skipLibCheck
-import {
-  buildBasinGraph, buildMergeTree, chainFor, leavesOf, suggestLevel, regionAt,
-} from '../dist-test/pick.js';
+// Build with `npm run build-tests`.
+import { buildBasinGraph, buildLadder, basinsAt, suggestRung } from '../dist-test/pick.js';
 
 let fails = 0;
 const check = (label, got, want) => {
@@ -18,91 +13,95 @@ const check = (label, got, want) => {
 const deg = d => (d * Math.PI) / 180;
 
 /**
- * Four basins in a row, with a strong seam down the middle:
+ * Basins in a row with a strong seam in the middle:
  *
  *   A --2deg-- B --50deg-- C --2deg-- D
  *
- * A and B are one thing; C and D are another; the two halves are separate
- * things. Any sane clustering merges A+B and C+D before joining the halves.
+ * A and B are one thing, C and D another, and the halves are separate things.
+ * `sizes` lets a basin be made deliberately huge to test that one rung cannot
+ * swallow the model.
  */
-function rowTrace(joins) {
-  const perBasin = 10;
-  const nTri = 4 * perBasin;
+function rowTrace(joins, perBasin = [10, 10, 10, 10]) {
+  const offsets = [];
+  let acc = 0;
+  for (const n of perBasin) { offsets.push(acc); acc += n; }
+  const nTri = acc;
   const basins = new Int32Array(nTri);
-  for (let f = 0; f < nTri; f++) basins[f] = Math.floor(f / perBasin) * 7 + 3; // sparse ids on purpose
+  for (let b = 0; b < perBasin.length; b++) {
+    for (let i = 0; i < perBasin[b]; i++) basins[offsets[b] + i] = b * 7 + 3; // sparse ids on purpose
+  }
   const edgeInfo = [];
   const conc = [];
   for (const [a, b, angle] of joins) {
-    for (let k = 0; k < 10; k++) {
+    const n = Math.min(perBasin[a], perBasin[b], 10);
+    for (let k = 0; k < n; k++) {
+      edgeInfo.push([offsets[a] + k, offsets[b] + k, 0, 1]);
       // alternate real crease edges with triangulation diagonals carrying zero,
       // exactly as a real boundary does
-      edgeInfo.push([a * perBasin + k, b * perBasin + k, 0, 1]);
       conc.push(k % 2 === 0 ? angle : 0);
     }
   }
-  return {
-    nTri, basins, adj: [], edgeInfo,
-    edgeConc: Float32Array.from(conc),
-    proxyOf: new Int32Array(nTri),
-  };
+  return { nTri, basins, adj: [], edgeInfo, edgeConc: Float32Array.from(conc), proxyOf: new Int32Array(nTri) };
 }
 
-const trace = rowTrace([[0, 1, deg(2)], [1, 2, deg(50)], [2, 3, deg(2)]]);
-const graph = buildBasinGraph(trace);
+const graph = buildBasinGraph(rowTrace([[0, 1, deg(2)], [1, 2, deg(50)], [2, 3, deg(2)]]));
 
 check('sparse basin ids are compacted', graph.count, 4);
 check('every face keeps a basin', [...graph.sizes], [10, 10, 10, 10]);
 check('three boundaries found', graph.boundaries.size, 3);
 
-const tree = buildMergeTree(graph);
-check('tree has 2n-1 nodes', tree.nodeCount, 7);
+const lad = buildLadder(graph, 0);
+check('the ladder reaches every basin', lad.order.length, 4);
+check('growth starts at the touched basin', lad.order[0], 0);
+check('the weak neighbour is taken first', lad.order[1], 1);
+check('one basin per rung', [...lad.cumulative], [10, 20, 30, 40]);
+check('rung 1 holds exactly A and B', basinsAt(lad, 1).sort(), [0, 1]);
+check('rung clamps instead of throwing', basinsAt(lad, 99).sort(), [0, 1, 2, 3]);
 
-// A's chain: itself, then A+B, then everything.
-const chain = chainFor(tree, 0);
-check('chain reaches the root', chain.length, 3);
-check('first step up from A is A+B',
-  leavesOf(tree, chain[1]).sort(), [0, 1]);
-check('second step takes the whole row',
-  leavesOf(tree, chain[2]).sort(), [0, 1, 2, 3]);
+// The strong seam must be measured at its real angle, not halved by the
+// triangulation diagonals that make up half of every boundary.
+check('the strong seam reads near 50 degrees',
+  Math.round((lad.strength[2] * 180) / Math.PI), 50);
+check('a mean would have halved it', Math.round((lad.strength[2] * 180) / Math.PI) > 40, true);
+check('weak boundaries come before the strong one', lad.strength[1] < lad.strength[2], true);
 
-// The strong seam must be the LAST thing crossed.
-check('weak boundaries merge before the strong one',
-  tree.height[chain[1]] < tree.height[chain[2]], true);
-check('the strong seam is measured near 50 degrees',
-  Math.round((tree.height[chain[2]] * 180) / Math.PI), 50);
-// A mean over these boundaries would read 25 degrees, not 50: half of every
-// boundary's edges are diagonals carrying no concavity at all.
-check('percentile is not diluted by triangulation diagonals',
-  Math.round((tree.height[chain[2]] * 180) / Math.PI) > 40, true);
+check('a touch on A stops before the strong seam', lad.suggested, 1);
+check('a touch on D stops before it too', buildLadder(graph, 3).suggested, 1);
 
-check('a touch on A stops before the strong seam', suggestLevel(tree, 0), 1);
-check('a touch on D stops before it too', suggestLevel(tree, 3), 1);
-check('regionAt matches the chain', regionAt(tree, 0, 1).sort(), [0, 1]);
-check('level clamps instead of throwing', regionAt(tree, 0, 99).sort(), [0, 1, 2, 3]);
-
-// ---- disconnected basins must never be crossed automatically ----------------
+// ---- one rung must never swallow the model --------------------------------
 {
-  // A--B joined weakly; C--D joined weakly; the two pairs never touch.
-  const t2 = rowTrace([[0, 1, deg(2)], [2, 3, deg(2)]]);
-  const g2 = buildBasinGraph(t2);
-  const tr2 = buildMergeTree(g2);
-  const c2 = chainFor(tr2, 0);
-  check('unconnected halves still share one root', c2.length, 3);
-  // JSON.stringify(Infinity) is "null", so assert finiteness directly rather
-  // than comparing the value -- otherwise NaN would pass this too.
-  check('the join between them is not finite', Number.isFinite(tr2.height[c2[2]]), false);
-  check('and it is specifically Infinity', tr2.height[c2[2]] === Infinity, true);
-  check('a touch never reaches across a disconnected join', suggestLevel(tr2, 0), 1);
+  // A is tiny and its ONLY weak neighbour is enormous; a second small basin
+  // hangs off it across a slightly stronger boundary.
+  const g = buildBasinGraph(rowTrace(
+    [[0, 1, deg(2)], [0, 2, deg(6)]],
+    [10, 400, 10],
+  ));
+  const l = buildLadder(g, 0);
+  check('the small neighbour is taken first despite a stronger boundary',
+    l.order[1], 2);
+  check('the huge one still arrives, just not on rung one', l.order[2], 1);
+  check('no rung more than doubles what is held before the last resort',
+    l.cumulative[1] <= l.cumulative[0] * 2, true);
 }
 
-// ---- a single basin degrades gracefully -------------------------------------
+// ---- disconnected basins are never crossed automatically -------------------
 {
-  const one = { nTri: 4, basins: new Int32Array(4), adj: [], edgeInfo: [], edgeConc: new Float32Array(0), proxyOf: new Int32Array(4) };
-  const g3 = buildBasinGraph(one);
-  const t3 = buildMergeTree(g3);
-  check('one basin -> one node', g3.count, 1);
-  check('its chain is just itself', chainFor(t3, 0), [0]);
-  check('suggestLevel stays in range', suggestLevel(t3, 0), 0);
+  const g = buildBasinGraph(rowTrace([[0, 1, deg(2)], [2, 3, deg(2)]]));
+  const l = buildLadder(g, 0);
+  check('growth stops at the edge of what it touches', l.order.length, 2);
+  check('and the default stays inside it', l.suggested, 1);
+}
+
+// ---- a lone basin degrades gracefully --------------------------------------
+{
+  const g = buildBasinGraph({
+    nTri: 4, basins: new Int32Array(4), adj: [], edgeInfo: [],
+    edgeConc: new Float32Array(0), proxyOf: new Int32Array(4),
+  });
+  const l = buildLadder(g, 0);
+  check('one basin -> one rung', l.order.length, 1);
+  check('suggestRung stays in range', suggestRung(l, g), 0);
+  check('basinsAt returns just it', basinsAt(l, 0), [0]);
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nall pick tests passed');
