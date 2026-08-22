@@ -92,30 +92,47 @@ runs everywhere, and every entry has semantics you can argue with:
 |---|---|---|
 | `twoBalls` | exactly 2 | physically disconnected — components alone must split these |
 | `ball` | exactly 1 | convex everywhere; splitting it means the threshold is chasing noise |
+| `shallowDimple` | exactly 1 | a ~8° styling dent is not a seam — the case boundary merging exists for |
+| `noisyBall` | 1–3 | voxel-staircase texture is noise; the guard against loosening merging |
 | `grooved` | 2–4, balanced | a deep groove around a bar must give two halves, not a thin ring |
 | `peanut` | 2–4 | two lobes at a ~77° concave crease — the most obvious split there is |
+
+The corpus **pulls in both directions on purpose**. `peanut` and `grooved` must
+split; `shallowDimple`, `noisyBall` and `ball` must not. A change that only ever
+loosens merging passes half of these and shatters the other half.
 
 `corpus.json` marks each entry `required` (the gate blocks on regression) or
 `failing` (a known gap, reported loudly, never blocking). When a known gap starts
 passing, the gate says so and `npm run accept` promotes it to `required`. The
 ratchet points at quality: it can be locked in, never locked out.
 
-### Known gap: `peanut`
+### How boundary strength is measured
 
-The shipped config returns **1 part** for two spheres meeting at a hard concave
-crease. The watershed itself is fine — at `mergeStopDeg=2` it produces a clean
-48620/48180 halving. Every larger value collapses it back to one.
+Boundary-strength merging used to score a region boundary by the **mean** concave
+angle along it. That mean is halved by something with no geometric meaning:
+**exactly half of any boundary's edges are triangulation diagonals** carrying no
+concavity at all. On the two-lobe fixture a real 77° crease measured 5.5° as a
+mean, and merged away under `mergeStopDeg=14`.
 
-Boundary-strength merging scores a region boundary by the **mean** concave angle
-along it. The crease is ~77°, but only on the exact ring of edges where the
-spheres meet; if the watershed line lands a row off that ring, the edges actually
-measured are flat and the mean collapses toward zero, so a 77° crease reads as
-"gentle" and the lobes merge.
+It is now read at the 70th percentile instead (`BOUNDARY_PERCENTILE` in
+`segment.ts`). Measured safe band on the corpus at `mergeStopDeg=14`:
 
-That is why tuning `mergeStopDeg` goes in circles — it is being asked to
-discriminate using a statistic that depends on exactly where the watershed line
-landed. `14` happens to suit `diablo.glb`. Candidate fixes are listed in
-`corpus.json`; none are applied, because they change shipped output.
+| percentile | result |
+|---|---|
+| p50 | `peanut` still merges away — under-splits |
+| **p60–p75** | **every fixture correct** |
+| p80+ | staircase noise reads as structure; `noisyBall` → 5 parts |
+| p95 | `noisyBall` → 10 parts |
+
+`0.70` sits mid-band with about ten points of margin either way. It is
+deliberately **not** a tuned knob in `SegmentConfig` — promoting it would invite
+exactly the per-model tuning this measurement was changed to avoid.
+
+**Reach matters as much as the statistic.** Scoring per-*face* curvature, or
+dilating it by one ring of neighbours, also fixes `peanut` — and shatters
+`noisyBall` into 18 parts, because a max-of-a-max amplifies precisely the
+staircase texture that normal smoothing exists to suppress. The measure stays on
+the per-edge smoothed field. `noisyBall` exists to keep it there.
 
 ### What changed, and why
 
@@ -142,9 +159,9 @@ Deploys to Netlify (site: partacular) — `netlify.toml` builds `npm run build`,
 - Phase 3: duplicate, recolor, export GLB/STL
 - Phase 4 (shipped): print path — Manifold merge to watertight, 3MF export, PWA install
 - Phase 5 (shipped): Carve / Join repair gestures, corpus gate, gesture test suite
-- Next: fix the `peanut` gap; grow the corpus as real models expose new failures;
-  carve currently partitions at triangle resolution (no re-triangulation across
-  the cut), which is invisible on dense meshes and rough on coarse ones
+- Next: grow the corpus as real models expose new failures; carve currently
+  partitions at triangle resolution (no re-triangulation across the cut), which
+  is invisible on dense meshes and rough on coarse ones
 
 ## Icons
 

@@ -105,6 +105,43 @@ export function grooved(segZ = 400, segTheta = 400, R = 1, depth = 0.45, width =
   return revolve(profile, segZ, segTheta);
 }
 
+/**
+ * A bar with a very SHALLOW dip around it (~8 degrees of dihedral).
+ *
+ * This is the counter-case, and it is the whole reason boundary-strength
+ * merging exists: a gentle dent is a styling line, not a seam, and must not
+ * become its own part. Any change to how boundary strength is measured has to
+ * keep this at one part while still splitting the sharp cases.
+ */
+export function shallowDimple(segZ = 400, segTheta = 400, R = 1, depth = 0.02, width = 0.3) {
+  const half = 1.4;
+  const profile = t => {
+    const z = -half + t * 2 * half;
+    let r = R;
+    if (Math.abs(z) < width) r = R - depth * (1 - Math.abs(z) / width);
+    if (t < 0.02) r = R * (t / 0.02);
+    if (t > 0.98) r = R * ((1 - t) / 0.02);
+    return { z, r };
+  };
+  return revolve(profile, segZ, segTheta);
+}
+
+/**
+ * A sphere whose vertices are snapped to a coarse grid — voxel-staircase noise.
+ *
+ * This is the risk guard for any change that makes merging LESS aggressive.
+ * Scanned and AI-generated meshes are covered in sharp little facet edges that
+ * are noise, not seams; normal smoothing exists to suppress them. If a boundary
+ * measure starts treating that texture as structure, a scan shatters into
+ * hundreds of pieces. One part is the only acceptable answer.
+ */
+export function noisyBall(segZ = 400, segTheta = 400, R = 1, step = R / 26) {
+  const s = ball(segZ, segTheta, R);
+  const out = new Float32Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = Math.round(s[i] / step) * step;
+  return out;
+}
+
 /** Two far-apart balls: connected components alone must separate these. */
 export function twoBalls(segZ = 200, segTheta = 200) {
   const a = ball(segZ, segTheta, 1);
@@ -119,5 +156,7 @@ export const FIXTURES = {
   peanut: { build: peanut, expect: { minParts: 2, maxParts: 4 }, why: 'two lobes joined at a concave crease' },
   ball: { build: ball, expect: { minParts: 1, maxParts: 1 }, why: 'convex everywhere, nothing to cut' },
   grooved: { build: grooved, expect: { minParts: 2, maxParts: 4 }, why: 'one deep groove around a bar' },
+  shallowDimple: { build: shallowDimple, expect: { minParts: 1, maxParts: 1 }, why: 'a gentle styling dent is not a seam' },
+  noisyBall: { build: noisyBall, expect: { minParts: 1, maxParts: 3 }, why: 'voxel-staircase texture is noise, not structure' },
   twoBalls: { build: twoBalls, expect: { minParts: 2, maxParts: 2 }, why: 'physically disconnected' },
 };

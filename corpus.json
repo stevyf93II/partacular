@@ -11,59 +11,83 @@
     "status 'failing'  -> a known gap, tracked not hidden. Reported loudly, never blocks.",
     "                     If it starts passing the gate says so and asks you to promote it.",
     "",
-    "The ratchet now points the right way: quality can only be locked in, never locked out."
+    "The ratchet now points the right way: quality can only be locked in, never locked out.",
+    "",
+    "The corpus pulls in BOTH directions on purpose. peanut and grooved must split;",
+    "shallowDimple, noisyBall and ball must not. A change that only ever loosens",
+    "merging passes half of these and shatters the other half -- which is exactly what",
+    "happened while fixing peanut, and is why noisyBall exists."
   ],
   "fixtures": [
     {
       "name": "twoBalls",
       "status": "required",
-      "expect": { "minParts": 2, "maxParts": 2 },
-      "why": "two physically separate spheres — connected components alone must split these"
+      "expect": {
+        "minParts": 2,
+        "maxParts": 2
+      },
+      "why": "two physically separate spheres \u2014 connected components alone must split these"
     },
     {
       "name": "ball",
       "status": "required",
-      "expect": { "minParts": 1, "maxParts": 1 },
+      "expect": {
+        "minParts": 1,
+        "maxParts": 1
+      },
       "why": "convex everywhere; over-segmenting a smooth sphere means the curvature threshold is chasing noise"
+    },
+    {
+      "name": "shallowDimple",
+      "status": "required",
+      "expect": {
+        "minParts": 1,
+        "maxParts": 1
+      },
+      "why": "a ~8 degree styling dent is not a seam - this is the case boundary-strength merging exists for"
+    },
+    {
+      "name": "noisyBall",
+      "status": "required",
+      "expect": {
+        "minParts": 1,
+        "maxParts": 3
+      },
+      "why": "voxel-staircase texture is noise, not structure; the guard against any change that loosens merging",
+      "note": [
+        "Scoring boundaries by per-FACE curvature, or by a one-ring dilation of it, shatters",
+        "this into 18 parts while still fixing peanut. Reach is as important as the statistic:",
+        "stay on the per-edge smoothed field. See BOUNDARY_PERCENTILE in segment.ts."
+      ]
     },
     {
       "name": "grooved",
       "status": "required",
-      "expect": { "minParts": 2, "maxParts": 4, "largestFractionMax": 0.75 },
+      "expect": {
+        "minParts": 2,
+        "maxParts": 4,
+        "largestFractionMax": 0.75
+      },
       "why": "a deep groove cut around a bar; must yield two comparable halves, not one bar plus a thin ring"
     },
     {
       "name": "peanut",
-      "status": "failing",
-      "expect": { "minParts": 2, "maxParts": 4 },
-      "why": "two lobes meeting at a ~77 degree concave crease — the most obvious split there is",
-      "note": [
-        "KNOWN GAP as of this corpus being written. The watershed DOES find both lobes:",
-        "with mergeStopDeg=2 the result is a clean 48620/48180 halving. Every larger value",
-        "collapses it back to one part.",
-        "",
-        "Cause: boundary-strength merging scores a region boundary by the MEAN concave angle",
-        "along it. The crease is ~77 degrees, but only on the exact ring of edges where the",
-        "two spheres meet. If the watershed line lands a row off that ring, the edges it",
-        "actually measures are flat and the mean collapses toward zero, so the boundary reads",
-        "as 'gentle' and the two lobes are merged.",
-        "",
-        "This is why tuning mergeStopDeg goes in circles: it is being asked to discriminate",
-        "using a statistic that depends on exactly where the watershed line landed. 14 happens",
-        "to suit diablo.glb.",
-        "",
-        "Candidate fixes (not applied — this changes shipped output, so it is Steve's call):",
-        "  a) score boundaries by a high percentile of concave angle rather than the mean",
-        "  b) dilate the boundary by one ring of faces before measuring",
-        "  c) snap region boundaries onto the local curvature ridge before scoring"
-      ]
+      "status": "required",
+      "expect": {
+        "minParts": 2,
+        "maxParts": 4
+      },
+      "why": "two lobes meeting at a ~77 degree concave crease - the most obvious split there is"
     }
   ],
   "localModels": [
     {
       "path": "reference/diablo.glb",
       "status": "optional",
-      "expect": { "minParts": 12, "maxParts": 40 },
+      "expect": {
+        "minParts": 12,
+        "maxParts": 40
+      },
       "why": "the original acceptance model; 49MB and not in git, so it runs only where it exists"
     }
   ]
