@@ -18,6 +18,7 @@ export interface UIHooks {
   onSelectTiny: () => void;
   onRake: (deg: number, phase: 'start' | 'move' | 'end') => void;
   onStanceTargets: () => string;
+  onDrop: () => void;
   onPickTake: () => void;
   onPickDelete: () => void;
   onPickColor: () => void;
@@ -71,6 +72,8 @@ export function initUI(doc: Document, hooks: UIHooks) {
       $('stancename').textContent = hooks.onStanceTargets();
     }
   };
+  $('dropbtn').addEventListener('click', () => hooks.onDrop());
+  $('stancedrop').addEventListener('click', () => hooks.onDrop());
   $('stancebtn').addEventListener('click', () => showStance(stancerow.style.display === 'none'));
   $('stancedone').addEventListener('click', () => showStance(false));
   $('stancelevel').addEventListener('click', () => {

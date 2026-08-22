@@ -453,6 +453,44 @@ export async function run({ verbose = true } = {}) {
     ok(after.every((a, i) => a.p.every((v, k) => Math.abs(v - before[i].p[k]) < 1e-6)
       && a.r.every((v, k) => Math.abs(v - before[i].r[k]) < 1e-6)),
       'ONE undo restores the exact original stance');
+    // ---- drop to plate: a separate action, on purpose ----------------------
+    // Rake used to re-seat the model itself, which cancelled half the gesture.
+    // Seating is now asked for, and it must be RIGID: one lift for everything.
+    const lowestY = () => {
+      let min = Infinity;
+      for (const m of doc.list()) {
+        const g = vp.visuals.get(m.id).mesh.geometry;
+        if (!g.boundingBox) g.computeBoundingBox();
+        const mesh = vp.visuals.get(m.id).mesh;
+        const mtx = new mesh.matrix.constructor().compose(
+          new mesh.position.constructor(...m.transform.position),
+          new mesh.quaternion.constructor().fromArray(m.transform.rotation),
+          new mesh.position.constructor(...m.transform.scale));
+        min = Math.min(min, g.boundingBox.clone().applyMatrix4(mtx).min.y);
+      }
+      return min;
+    };
+
+    rake.value = '120';
+    rake.dispatchEvent(new Event('input', { bubbles: true }));
+    rake.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(250);
+    const sunk = lowestY();
+    ok(sunk < -1e-3, `a rake leaves the model hanging below the plate (${sunk.toFixed(4)})`);
+
+    const preDrop = doc.list().map(m => [...m.transform.position]);
+    document.getElementById('stancedrop').click();
+    await sleep(250);
+    ok(Math.abs(lowestY()) < 1e-3, `Drop seats it exactly on the plate (${lowestY().toFixed(4)})`);
+    const lifts = doc.list().map((m, i) => m.transform.position[1] - preDrop[i][1]);
+    ok(Math.max(...lifts) - Math.min(...lifts) < 1e-6,
+      'every part lifts by the same amount — a group lands together, it does not flatten');
+    ok(doc.list().every((m, i) => Math.abs(m.transform.position[0] - preDrop[i][0]) < 1e-9
+      && Math.abs(m.transform.position[2] - preDrop[i][2]) < 1e-9), 'Drop never moves anything sideways');
+    doc.undo();
+    await sleep(150);
+    ok(Math.abs(lowestY() - sunk) < 1e-6, 'Drop is ONE undo step');
+
     document.getElementById('stancedone').click();
   }
 

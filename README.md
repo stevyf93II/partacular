@@ -128,10 +128,15 @@ it began rather than accumulating drift. One stroke is one undo step, however
 many parts moved. **Level** puts it back flat.
 
 It rocks like a lever: the model pivots about its true centre, so one end drops
-by as much as the other rises. It is deliberately **not** re-seated on the grid
-afterwards — lifting the model so nothing sits below zero undoes half the
-gesture, shoving the end that just dropped straight back up, and you get a model
-that only ever rises instead of a front end that goes down.
+by as much as the other rises. **Drop to plate** (in the stance row, and as
+**Drop** in the top bar) seats it back down when you want that — a separate
+action, deliberately, because doing it automatically undoes half the gesture: it shoves the end that just dropped straight back up,
+and you get a model that only ever rises instead of a front end that goes down.
+Tilting and seating are two different intentions.
+
+Drop moves every target by the **same** lift, so a group lands on the plate
+together rather than flattening into a pancake, and it works on a selection as
+well as the whole model.
 
 ### Framing
 
@@ -253,7 +258,7 @@ would notice breaking: a dragged part stays pinned to the finger to under a
 pixel, a 2x pinch gives exactly 2x, a 90 degree twist gives exactly 90 degrees,
 undo lands exactly back where it started, carve/join conserve every triangle and
 cost exactly one undo step, and a `pointercancel` leaves no phantom pointers.
-71 checks, including touch-to-select, the parts list and stance: a held piece is always a part of the
+78 checks, including touch-to-select, the parts list, stance and drop-to-plate: a held piece is always a part of the
 model rather than all of it, the drag ladder never shrinks as you pull outward,
 taking a piece conserves every triangle and costs exactly one undo step, bulk
 delete and bulk merge each cost one undo step, deleting every part is refused,

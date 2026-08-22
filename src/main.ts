@@ -38,6 +38,7 @@ const ui = initUI(doc, {
   onSelectTiny: () => doc.selectMany(junkParts().map(m => m.id)),
   onRake: (deg, phase) => rake(deg, phase),
   onStanceTargets: () => (doc.selectedIds.size ? `${doc.selectedIds.size} selected part(s)` : 'whole model'),
+  onDrop: () => dropToPlate(),
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
   onCarve: () => startCarve(),
   onJoin: () => startJoin(),
@@ -186,6 +187,47 @@ function partWorldBox(id: string): THREE.Box3 | null {
     new THREE.Vector3(...m.transform.scale),
   );
   return geo.boundingBox!.clone().applyMatrix4(mtx);
+}
+
+/**
+ * Sit whatever is selected — or the whole model — back down on the grid.
+ *
+ * Deliberately a separate action rather than something rake does for you. Rake
+ * used to re-seat the model automatically, and that quietly cancelled half the
+ * gesture: the end that had just dropped got shoved straight back up, so the
+ * model only ever rose. Tilting and seating are two different intentions, and
+ * the second one has to be asked for.
+ *
+ * Every target moves by the SAME lift, so a group lands on the plate without
+ * coming apart. Dropping each part to zero independently would flatten the
+ * model into a pancake.
+ */
+function dropToPlate() {
+  const ids = currentTargets();
+  if (!ids.length) { ui.showToast('Nothing to drop'); return; }
+
+  const box = new THREE.Box3();
+  for (const id of ids) {
+    const b = partWorldBox(id);
+    if (b) box.union(b);
+  }
+  if (box.isEmpty()) return;
+
+  const lift = -box.min.y;
+  if (Math.abs(lift) < 1e-6) { ui.showToast('Already sitting on the plate'); return; }
+
+  doc.beginBatch();
+  for (const id of ids) {
+    const m = doc.get(id); if (!m) continue;
+    const p = m.transform.position;
+    doc.beginTransform(id);
+    doc.updateTransform(id, { position: [p[0], p[1] + lift, p[2]] });
+    doc.endTransform();
+  }
+  doc.endBatch();
+  viewport.refreshModelBounds();
+  const what = doc.selectedIds.size ? `${ids.length} part${ids.length > 1 ? 's' : ''}` : 'model';
+  ui.showToast(`Dropped the ${what} onto the plate${lift < 0 ? '' : ' (lifted up to it)'}`);
 }
 
 function rake(deg: number, phase: 'start' | 'move' | 'end') {
