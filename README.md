@@ -110,6 +110,36 @@ selects parts exactly as before. Merging back re-enables picking. Dragging a
 part you have already selected still moves it, so nothing that worked before
 stopped working.
 
+## Stance
+
+**Stance** tilts the model about its lateral axis — rake. Nose down, tail up, or
+back to level. It is not a reshape: no geometry is touched, the whole assembly
+just sits at an angle, the way lowering a front end changes a car's attitude
+without changing its bodywork.
+
+The whole model moves **rigidly**. Every part's position swings about one shared
+pivot as well as its own orientation turning — rotating parts in place would pull
+the car apart. With parts selected it rakes only those, so you can tilt a body
+and leave the wheels standing.
+
+The slider is absolute, not incremental: it always describes the angle away from
+the stance the stroke started at, so dragging back to zero returns exactly where
+it began rather than accumulating drift. One stroke is one undo step, however
+many parts moved. **Level** puts it back flat.
+
+Raking the whole model re-seats it on the grid afterwards; raking a selection
+does not, because dropping a lone selection to the floor would tear it away from
+everything else.
+
+### Orientation is a quaternion
+
+`PartTransform` used to carry a single `rotationY`, which cannot express rake at
+all. Euler angles would only have moved the problem — a yaw applied inside a
+pitch is a different rotation from a pitch applied inside a yaw, and any fixed
+angle order gets one of the two wrong the moment a part is both twisted and
+raked. Orientation is now a quaternion, and twist, ⟳ 45° and rake all compose
+correctly.
+
 ## Managing parts
 
 **Parts** opens a list of everything in the model: colour, name, triangle count,
@@ -209,7 +239,7 @@ would notice breaking: a dragged part stays pinned to the finger to under a
 pixel, a 2x pinch gives exactly 2x, a 90 degree twist gives exactly 90 degrees,
 undo lands exactly back where it started, carve/join conserve every triangle and
 cost exactly one undo step, and a `pointercancel` leaves no phantom pointers.
-63 checks, including touch-to-select and the parts list: a held piece is always a part of the
+71 checks, including touch-to-select, the parts list and stance: a held piece is always a part of the
 model rather than all of it, the drag ladder never shrinks as you pull outward,
 taking a piece conserves every triangle and costs exactly one undo step, bulk
 delete and bulk merge each cost one undo step, deleting every part is refused,
@@ -318,6 +348,8 @@ Deploys to Netlify (site: partacular) — `netlify.toml` builds `npm run build`,
 - Phase 6 (shipped): Touch to select — basin merge tree, per-touch selection
 - Phase 7 (shipped): parts list with multi-select, bulk delete/hide/merge, Tidy,
   and size-based debris bucketing
+- Phase 8 (shipped): Stance / rake — rigid tilt about the lateral axis,
+  orientation stored as a quaternion
 - Next: grow the corpus as real models expose new failures; carve currently
   partitions at triangle resolution (no re-triangulation across the cut), which
   is invisible on dense meshes and rough on coarse ones; the first touch on a

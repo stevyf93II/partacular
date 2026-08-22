@@ -81,7 +81,8 @@ export class Viewport {
   private dragStartHit = new THREE.Vector3();
   private dragStartPos: [number, number, number] = [0, 0, 0];
   private pinchStartDist = 1; private pinchStartAngle = 0;
-  private pinchStartScale: [number, number, number] = [1, 1, 1]; private pinchStartRotY = 0;
+  private pinchStartScale: [number, number, number] = [1, 1, 1];
+  private pinchStartQuat: [number, number, number, number] = [0, 0, 0, 1];
 
   constructor(container: HTMLElement, private doc: Document) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -511,7 +512,7 @@ export class Viewport {
       this.pinchStartAngle = Math.atan2(b.y - a.y, b.x - a.x);
       const m = this.doc.get(this.doc.selectedId!)!;
       this.pinchStartScale = [...m.transform.scale];
-      this.pinchStartRotY = m.transform.rotationY;
+      this.pinchStartQuat = [...m.transform.rotation];
     }
   }
 
@@ -558,8 +559,12 @@ export class Viewport {
       const angle = Math.atan2(b.y - a.y, b.x - a.x);
       const f = dist / this.pinchStartDist; // uniform pinch preserves axis ratios
       const scale = this.pinchStartScale.map(v => THREE.MathUtils.clamp(v * f, 0.05, 50)) as [number, number, number];
-      const rotY = this.pinchStartRotY - (angle - this.pinchStartAngle); // screen twist -> Y spin
-      this.doc.updateTransform(sel, { scale, rotationY: rotY });
+      // Screen twist spins the part about Y, applied on top of whatever
+      // orientation it already had rather than replacing it.
+      const spin = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0), -(angle - this.pinchStartAngle));
+      const q = new THREE.Quaternion().fromArray(this.pinchStartQuat).premultiply(spin);
+      this.doc.updateTransform(sel, { scale, rotation: q.toArray() as [number, number, number, number] });
       this.moved = true;
     }
   }
@@ -622,7 +627,9 @@ export class Viewport {
     const sel = this.doc.selectedId; if (!sel) return;
     const m = this.doc.get(sel)!;
     this.doc.beginTransform(sel);
-    this.doc.updateTransform(sel, { rotationY: m.transform.rotationY + Math.PI / 4 });
+    const step = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4);
+    const q = new THREE.Quaternion().fromArray(m.transform.rotation).premultiply(step);
+    this.doc.updateTransform(sel, { rotation: q.toArray() as [number, number, number, number] });
     this.doc.endTransform();
   }
 
@@ -710,7 +717,7 @@ export class Viewport {
     if (!v || !m) return;
     const k = this.doc.explodeFactor;
     v.mesh.position.set(...m.transform.position).addScaledVector(v.explodeDir, k * 1.1);
-    v.mesh.rotation.set(0, m.transform.rotationY, 0);
+    v.mesh.quaternion.fromArray(m.transform.rotation);
     v.mesh.scale.set(...m.transform.scale);
   }
 

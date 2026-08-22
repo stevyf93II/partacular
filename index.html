@@ -154,6 +154,7 @@
     <button class="btn" id="splitbtn" style="display:none">Split</button>
     <button class="btn" id="partsbtn">Parts</button>
     <button class="btn" id="tidybtn" style="display:none">Tidy</button>
+    <button class="btn" id="stancebtn">Stance</button>
     <button class="btn" id="fitbtn">Fit</button>
     <button class="btn" id="savebtn">Save</button>
     <button class="btn" id="openbtn">Open</button>
@@ -203,6 +204,22 @@
       <button class="hide" id="pillhide">Hide</button>
       <button class="del" id="pilldel">Delete</button>
     </div>
+    <!-- Stance: tilt the model about its lateral axis. Not a reshape - the
+         geometry is untouched, the whole thing just sits at an angle. -->
+    <div id="stancerow" class="explode-row" style="display:none; flex-direction:column; align-items:stretch; gap:6px;">
+      <div class="axisrow">
+        <span class="sizename" id="stancename">whole model</span>
+        <span style="flex:1"></span>
+        <button class="btn" id="stancelevel">Level</button>
+        <button class="btn" id="stancedone">Done</button>
+      </div>
+      <div class="axisrow">
+        <label>RAKE</label>
+        <input type="range" id="rake" min="-150" max="150" value="0" />
+        <span id="rakev">0.0°</span>
+      </div>
+    </div>
+
     <div id="sizerow" class="explode-row" style="display:none; flex-direction:column; align-items:stretch; gap:6px;">
       <div class="axisrow"><span class="sizename" id="sizename">part</span><span style="flex:1"></span><button class="btn" id="sizedone">Done</button></div>
       <div class="axisrow"><label>W&nbsp;(X)</label><input type="range" id="scalex" min="0" max="100" value="50" /><span id="scalexv">1.00×</span></div>

@@ -3,7 +3,16 @@
 
 export interface PartTransform {
   position: [number, number, number];
-  rotationY: number;
+  /**
+   * Orientation as a quaternion [x, y, z, w].
+   *
+   * This was a single rotationY, which could not express rake -- tilting a car
+   * nose-down about its lateral axis. Storing Euler angles instead would only
+   * have moved the problem: a yaw applied inside a pitch is not the same
+   * rotation as a pitch applied inside a yaw, and any fixed angle order gets one
+   * of the two wrong the moment a part is both twisted and raked.
+   */
+  rotation: [number, number, number, number];
   /** per-axis scale [x, y, z]; uniform gestures multiply all three */
   scale: [number, number, number];
 }
@@ -17,8 +26,10 @@ export interface PartMeta {
   transform: PartTransform;
 }
 
-export const identityTransform = (): PartTransform => ({ position: [0, 0, 0], rotationY: 0, scale: [1, 1, 1] });
-const cloneT = (t: PartTransform): PartTransform => ({ position: [...t.position], rotationY: t.rotationY, scale: [...t.scale] });
+export const identityTransform = (): PartTransform =>
+  ({ position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+const cloneT = (t: PartTransform): PartTransform =>
+  ({ position: [...t.position], rotation: [...t.rotation], scale: [...t.scale] });
 
 export type DocEvent =
   | { type: 'reset' }
@@ -174,7 +185,7 @@ export class Document {
   updateTransform(id: string, t: Partial<PartTransform>) {
     const m = this.parts.get(id); if (!m) return;
     if (t.position) m.transform.position = [...t.position];
-    if (t.rotationY !== undefined) m.transform.rotationY = t.rotationY;
+    if (t.rotation) m.transform.rotation = [...t.rotation];
     if (t.scale !== undefined) m.transform.scale = [...t.scale];
     this.emit({ type: 'part-transform', id });
   }
@@ -184,7 +195,7 @@ export class Document {
     const m = this.parts.get(this.transformId);
     if (m) {
       const b = this.transformBefore, a = m.transform;
-      const changed = b.rotationY !== a.rotationY ||
+      const changed = b.rotation.some((v, i) => v !== a.rotation[i]) ||
         b.scale[0] !== a.scale[0] || b.scale[1] !== a.scale[1] || b.scale[2] !== a.scale[2] ||
         b.position[0] !== a.position[0] || b.position[1] !== a.position[1] || b.position[2] !== a.position[2];
       if (changed) this.pushUndo({ kind: 'transform', id: this.transformId, before: this.transformBefore });

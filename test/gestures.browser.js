@@ -161,7 +161,7 @@ export async function run({ verbose = true } = {}) {
     const part = biggest();
     doc.select(part.id);
     const s0 = [...doc.get(part.id).transform.scale];
-    const r0 = doc.get(part.id).transform.rotationY;
+    const r0 = [...doc.get(part.id).transform.rotation];
     const o = surfacePoint(part.id);
     const span = 100;
 
@@ -171,7 +171,11 @@ export async function run({ verbose = true } = {}) {
     near(doc.get(part.id).transform.scale[0] / s0[0], 2, 0.001, 'pinch to 2x span gives exactly 2x scale');
 
     fire('pointermove', 2, o.x, o.y + span * 2);            // rotate the pair 90 degrees
-    const dRot = (doc.get(part.id).transform.rotationY - r0) * 180 / Math.PI;
+    // Angle between the start and current orientation, which is what a twist
+    // means now that orientation is a quaternion rather than a single Y angle.
+    const q0 = r0, q1 = doc.get(part.id).transform.rotation;
+    const dot = Math.min(1, Math.abs(q0.reduce((s, v, i) => s + v * q1[i], 0)));
+    const dRot = 2 * Math.acos(dot) * 180 / Math.PI;
     near(Math.abs(dRot), 90, 0.5, 'twisting 90 degrees rotates the part 90 degrees');
 
     fire('pointerup', 2, o.x, o.y + span * 2);
@@ -179,7 +183,8 @@ export async function run({ verbose = true } = {}) {
     await sleep(20);
     doc.undo(); await sleep(20);
     near(doc.get(part.id).transform.scale[0], s0[0], 1e-6, 'undo reverts scale and twist together');
-    near(doc.get(part.id).transform.rotationY, r0, 1e-6, 'rotation restored too');
+    const qb = doc.get(part.id).transform.rotation;
+    near(Math.max(...qb.map((v, i) => Math.abs(v - r0[i]))), 0, 1e-6, 'rotation restored too');
   }
 
   // ---------------------------------------------------- camera vs the part --
@@ -395,6 +400,48 @@ export async function run({ verbose = true } = {}) {
     document.getElementById('partsclose').click();
     await sleep(120);
     ok(!panel.classList.contains('show'), 'Close hides the list');
+  }
+
+  // ------------------------------------------------------------------ stance --
+  {
+    // Rake tilts the whole assembly rigidly. The thing that must not happen is
+    // parts rotating in place, which would pull the model apart.
+    if (doc.count() < 2) { document.getElementById('splitbtn').click(); await sleep(400); }
+    const before = doc.list().map(m => ({ p: [...m.transform.position], r: [...m.transform.rotation] }));
+    const span = (l, i, j) => Math.hypot(...[0, 1, 2].map(k => l[i].p[k] - l[j].p[k]));
+    const pairs = [[0, 1], [1, 2], [0, 2]].filter(([i, j]) => i < before.length && j < before.length);
+    const d0 = pairs.map(([i, j]) => span(before, i, j));
+
+    document.getElementById('stancebtn').click();
+    await sleep(120);
+    ok(document.getElementById('stancerow').style.display !== 'none', 'Stance opens');
+    ok(document.getElementById('stancename').textContent === 'whole model',
+      'with no selection it acts on the whole model');
+
+    const rake = document.getElementById('rake');
+    rake.value = '90';
+    rake.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(120);
+    ok(document.getElementById('rakev').textContent === '9.0°', 'the slider reads 9.0 degrees');
+
+    const mid = doc.list().map(m => ({ p: [...m.transform.position], r: [...m.transform.rotation] }));
+    const d1 = pairs.map(([i, j]) => span(mid, i, j));
+    ok(d0.every((d, i) => Math.abs(d - d1[i]) < 1e-3),
+      'parts stay rigidly together — the model tilts, it does not come apart');
+    ok(mid.some((m, i) => m.r.some((v, k) => Math.abs(v - before[i].r[k]) > 1e-4)),
+      'every part is turned, not merely shifted');
+    ok(triTotal() === startTris, 'rake never touches geometry');
+
+    rake.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(200);
+    ok(doc.canUndo(), 'the stroke is undoable');
+    doc.undo();
+    await sleep(150);
+    const after = doc.list().map(m => ({ p: [...m.transform.position], r: [...m.transform.rotation] }));
+    ok(after.every((a, i) => a.p.every((v, k) => Math.abs(v - before[i].p[k]) < 1e-6)
+      && a.r.every((v, k) => Math.abs(v - before[i].r[k]) < 1e-6)),
+      'ONE undo restores the exact original stance');
+    document.getElementById('stancedone').click();
   }
 
   // ----------------------------------------------------------- cancel/escape --

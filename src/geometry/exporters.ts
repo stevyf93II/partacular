@@ -12,7 +12,7 @@ function buildExportScene(doc: Document): THREE.Scene {
     const geo = getGeometry(m.id); if (!geo) continue;
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: m.color }));
     mesh.position.set(...m.transform.position);
-    mesh.rotation.set(0, m.transform.rotationY, 0);
+    mesh.quaternion.fromArray(m.transform.rotation);
     mesh.scale.set(...m.transform.scale);
     mesh.name = m.name;
     scene.add(mesh);

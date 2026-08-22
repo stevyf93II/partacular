@@ -16,6 +16,8 @@ export interface UIHooks {
   onBulkHide: () => void;
   onBulkMerge: () => void;
   onSelectTiny: () => void;
+  onRake: (deg: number, phase: 'start' | 'move' | 'end') => void;
+  onStanceTargets: () => string;
   onPickTake: () => void;
   onPickDelete: () => void;
   onPickColor: () => void;
@@ -55,6 +57,42 @@ export function initUI(doc: Document, hooks: UIHooks) {
   $('pillcolor').addEventListener('click', () => hooks.onRecolor());
   $('fitbtn').addEventListener('click', () => hooks.onFit());
   $('tidybtn').addEventListener('click', () => hooks.onTidy());
+
+  // ---- stance: one rake slider, one undo step per stroke ---------------------
+  const stancerow = $('stancerow');
+  const rake = $('rake') as HTMLInputElement;
+  const rakev = $('rakev');
+  let raking = false;
+  const showStance = (on: boolean) => {
+    stancerow.style.display = on ? 'flex' : 'none';
+    if (on) {
+      rake.value = '0';
+      rakev.textContent = '0.0°';
+      $('stancename').textContent = hooks.onStanceTargets();
+    }
+  };
+  $('stancebtn').addEventListener('click', () => showStance(stancerow.style.display === 'none'));
+  $('stancedone').addEventListener('click', () => showStance(false));
+  $('stancelevel').addEventListener('click', () => {
+    // Back to flat from wherever the slider is, as one action.
+    hooks.onRake(0, 'start');
+    hooks.onRake(0, 'end');
+    rake.value = '0';
+    rakev.textContent = '0.0°';
+  });
+  rake.addEventListener('input', () => {
+    const deg = Number(rake.value) / 10;
+    rakev.textContent = deg.toFixed(1) + '°';
+    if (!raking) { raking = true; hooks.onRake(deg, 'start'); }
+    hooks.onRake(deg, 'move');
+  });
+  const endRake = () => {
+    if (!raking) return;
+    raking = false;
+    hooks.onRake(Number(rake.value) / 10, 'end');
+  };
+  rake.addEventListener('change', endRake);
+  rake.addEventListener('pointerup', endRake);
 
   // ---- parts list -----------------------------------------------------------
   const panel = $('partspanel');

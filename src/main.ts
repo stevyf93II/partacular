@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Document, PartMeta, identityTransform } from './core/document';
+import { Document, PartMeta, PartTransform, identityTransform } from './core/document';
 import { Viewport } from './viewport/viewport';
 import { initUI } from './ui/ui';
 import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometry/loaders';
@@ -36,6 +36,8 @@ const ui = initUI(doc, {
   onBulkHide: () => bulkHide(),
   onBulkMerge: () => bulkMerge(),
   onSelectTiny: () => doc.selectMany(junkParts().map(m => m.id)),
+  onRake: (deg, phase) => rake(deg, phase),
+  onStanceTargets: () => (doc.selectedIds.size ? `${doc.selectedIds.size} selected part(s)` : 'whole model'),
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
   onCarve: () => startCarve(),
   onJoin: () => startJoin(),
@@ -75,7 +77,7 @@ function bakeParts(metas: PartMeta[]): THREE.BufferGeometry | null {
     const t = meta.transform;
     const mtx = new THREE.Matrix4().compose(
       new THREE.Vector3(...t.position),
-      q.setFromAxisAngle(yAxis, t.rotationY),
+      q.fromArray(t.rotation),
       new THREE.Vector3(...t.scale),
     );
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
@@ -112,6 +114,145 @@ async function splitOrMerge() {
     const n = doc.count();
     ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
   }
+}
+
+/* -------------------------------------------------------------------- stance */
+
+/**
+ * Rake: tilt the model about its lateral axis so it sits nose-down or tail-up.
+ *
+ * This is a stance change, not a reshape. Every part keeps its geometry; the
+ * whole assembly is rotated rigidly about one shared pivot, which is why each
+ * part's POSITION is swung about that pivot as well as its own orientation
+ * being turned. Rotating parts in place would pull the car apart.
+ *
+ * Absolute, not incremental: the slider always describes the angle away from
+ * the stance the stroke started at, so dragging back to zero returns exactly
+ * where it began instead of accumulating drift.
+ */
+const copyTransform = (t: PartTransform): PartTransform => ({
+  position: [...t.position], rotation: [...t.rotation], scale: [...t.scale],
+});
+
+let rakeBaseline: Map<string, PartTransform> | null = null;
+let rakeTargets: string[] = [];
+
+function currentTargets(): string[] {
+  return doc.selectedIds.size ? [...doc.selectedIds] : doc.list().map(m => m.id);
+}
+
+/** The horizontal axis to tilt ABOUT: across the model, not along it. */
+function lateralAxis(ids: string[]): THREE.Vector3 {
+  const box = new THREE.Box3();
+  for (const id of ids) {
+    const m = doc.get(id); const geo = getGeometry(id);
+    if (!m || !geo) continue;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const half = geo.boundingBox!.getSize(new THREE.Vector3())
+      .multiply(new THREE.Vector3(...m.transform.scale)).multiplyScalar(0.5);
+    const p = new THREE.Vector3(...m.transform.position);
+    box.expandByPoint(p.clone().add(half));
+    box.expandByPoint(p.clone().sub(half));
+  }
+  const size = box.getSize(new THREE.Vector3());
+  // Longest horizontal extent is the length of the thing; tilt about the other.
+  return size.x >= size.z ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+}
+
+function rakePivot(ids: string[]): THREE.Vector3 {
+  const box = new THREE.Box3();
+  for (const id of ids) {
+    const m = doc.get(id);
+    if (m) box.expandByPoint(new THREE.Vector3(...m.transform.position));
+  }
+  return box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+}
+
+/** World-space bounds of a part, with its rotation actually accounted for. */
+function partWorldBox(id: string): THREE.Box3 | null {
+  const m = doc.get(id); const geo = getGeometry(id);
+  if (!m || !geo) return null;
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const mtx = new THREE.Matrix4().compose(
+    new THREE.Vector3(...m.transform.position),
+    new THREE.Quaternion().fromArray(m.transform.rotation),
+    new THREE.Vector3(...m.transform.scale),
+  );
+  return geo.boundingBox!.clone().applyMatrix4(mtx);
+}
+
+/** Rest the given parts back on the grid after tilting them. */
+function groundParts(ids: string[]) {
+  const box = new THREE.Box3();
+  for (const id of ids) {
+    const b = partWorldBox(id);
+    if (b) box.union(b);
+  }
+  if (box.isEmpty() || Math.abs(box.min.y) < 1e-9) return;
+  const lift = -box.min.y;
+  for (const id of ids) {
+    const m = doc.get(id); if (!m) continue;
+    const p = m.transform.position;
+    doc.updateTransform(id, { position: [p[0], p[1] + lift, p[2]] });
+  }
+}
+
+function rake(deg: number, phase: 'start' | 'move' | 'end') {
+  if (phase === 'start') {
+    rakeTargets = currentTargets();
+    rakeBaseline = new Map();
+    for (const id of rakeTargets) {
+      const m = doc.get(id);
+      if (m) rakeBaseline.set(id, copyTransform(m.transform));
+    }
+    return;
+  }
+  const baseline = rakeBaseline;
+  if (!baseline) return;
+
+  const apply = () => {
+    const axis = lateralAxis(rakeTargets);
+    const pivot = rakePivot(rakeTargets);
+    const rot = new THREE.Quaternion().setFromAxisAngle(axis, (deg * Math.PI) / 180);
+    for (const id of rakeTargets) {
+      const b = baseline.get(id); if (!b) continue;
+      const p = new THREE.Vector3(...b.position).sub(pivot).applyQuaternion(rot).add(pivot);
+      const q = new THREE.Quaternion().fromArray(b.rotation).premultiply(rot);
+      doc.updateTransform(id, {
+        position: [p.x, p.y, p.z],
+        rotation: q.toArray() as [number, number, number, number],
+      });
+    }
+    // Only re-seat the model when the whole of it moved; dropping a lone
+    // selection onto the grid would tear it away from everything else.
+    if (rakeTargets.length === doc.count()) groundParts(rakeTargets);
+  };
+
+  if (phase === 'move') { apply(); viewport.refreshModelBounds(); return; }
+
+  // Commit. beginTransform/endTransform only ever track ONE part, so the stroke
+  // is replayed part by part: settle on the final pose, remember it, rewind that
+  // part to where the stroke began, then move it again with recording on. All of
+  // it inside one batch, so the whole stance change is a single undo.
+  apply();
+  const finals = new Map<string, PartTransform>();
+  for (const id of rakeTargets) {
+    const m = doc.get(id);
+    if (m) finals.set(id, copyTransform(m.transform));
+  }
+  doc.beginBatch();
+  for (const id of rakeTargets) {
+    const b = baseline.get(id); const f = finals.get(id);
+    if (!b || !f) continue;
+    doc.updateTransform(id, { position: [...b.position], rotation: [...b.rotation] });
+    doc.beginTransform(id);
+    doc.updateTransform(id, { position: [...f.position], rotation: [...f.rotation] });
+    doc.endTransform();
+  }
+  doc.endBatch();
+  rakeBaseline = null;
+  viewport.refreshModelBounds();
+  if (deg !== 0) ui.showToast(`Raked ${deg.toFixed(1)}° — Undo puts it back`);
 }
 
 /* -------------------------------------------------------------- bulk actions */
@@ -316,7 +457,7 @@ function applyPartition(id: string, triGroup: Uint32Array, groupCount: number, n
   const src = doc.get(id); const geo = getGeometry(id);
   if (!src || !geo) return 0;
   const pieces = buildGroupGeometries(geo, triGroup, groupCount);
-  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), src.transform.rotationY);
+  const q = new THREE.Quaternion().fromArray(src.transform.rotation);
   const scale = new THREE.Vector3(...src.transform.scale);
   const metas: PartMeta[] = [];
 
@@ -340,7 +481,7 @@ function applyPartition(id: string, triGroup: Uint32Array, groupCount: number, n
       src.transform.position[1] + offset.y,
       src.transform.position[2] + offset.z,
     ];
-    t.rotationY = src.transform.rotationY;
+    t.rotation = [...src.transform.rotation];
     t.scale = [...src.transform.scale];
     metas.push({
       id: nid, name: names[i] ?? `${src.name} ${i + 1}`,
@@ -427,7 +568,7 @@ function duplicateSelected() {
   const t = identityTransform();
   const offset = Math.max(0.15 * Math.cbrt(src.triCount), 0.2) * Math.max(...src.transform.scale);
   t.position = [src.transform.position[0] + offset, src.transform.position[1], src.transform.position[2] + offset];
-  t.rotationY = src.transform.rotationY; t.scale = [...src.transform.scale];
+  t.rotation = [...src.transform.rotation]; t.scale = [...src.transform.scale];
   doc.addParts([{ id, name: `${src.name} copy`, triCount: src.triCount, visible: true, color: src.color, transform: t }], true);
   doc.select(id);
 }

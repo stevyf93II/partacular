@@ -45,14 +45,14 @@ export function export3MFInWorker(doc: Document, provenance: string): Promise<Pr
   const jobId = ++jobSeq;
   const parts: { name: string; positions: Float32Array }[] = [];
   const transfers: ArrayBuffer[] = [];
-  const q = new THREE.Quaternion(), y = new THREE.Vector3(0, 1, 0);
+  const q = new THREE.Quaternion();
   for (const meta of doc.list()) {
     if (!meta.visible) continue;
     const geo = getGeometry(meta.id); if (!geo) continue;
     const t = meta.transform;
     const m = new THREE.Matrix4().compose(
       new THREE.Vector3(...t.position),
-      q.setFromAxisAngle(y, t.rotationY),
+      q.fromArray(t.rotation),
       new THREE.Vector3(...t.scale),
     );
     const positions = worldPositions(geo, m);
