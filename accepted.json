@@ -1,5 +1,5 @@
 {
-  "acceptedAt": "2026-08-21T11:01:50.506Z",
+  "acceptedAt": "2026-08-22T05:55:48.787Z",
   "model": "reference/diablo.glb",
   "modelSha256": "32e480d28a1e7565d11d1b6493d19f08d73247dae3a9346af2c9ad41cb11b47e",
   "params": {
@@ -13,7 +13,7 @@
     "maxParts": 100
   },
   "fingerprint": {
-    "partCount": 25,
-    "hash": "3f34865dabf90751c1addff868cb727d04add25697f95e6e1f78306d70745409"
+    "partCount": 16,
+    "hash": "a982fcd5f048a9f4ec285599577d37c105a607a9aea88d7864f0fe4cae707bb8"
   }
 }

@@ -5,7 +5,7 @@ import { initUI } from './ui/ui';
 import { parseFile, buildGroupGeometries, demoSoup, LoadedPart } from './geometry/loaders';
 import { splitInWorker } from './geometry/splitClient';
 import { repairFromStroke } from './geometry/repair';
-import { clearPickIndexes, forgetPickIndex } from './geometry/pickClient';
+import { clearPickIndexes, forgetPickIndex, pickIndexFor } from './geometry/pickClient';
 import { putGeometry, getGeometry, clearGeometries } from './geometry/store';
 import { exportGLB, exportSTL, downloadBlob } from './geometry/exporters';
 import { export3MFInWorker } from './geometry/printClient';
@@ -28,6 +28,7 @@ const ui = initUI(doc, {
   onRecolor: () => recolorSelected(),
   onExport: kind => doExport(kind).catch(err => ui.showToast(`Export failed: ${err.message ?? err}`)),
   onFit: () => viewport.fitCamera(),
+  onTidy: () => tidy(),
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
   onCarve: () => startCarve(),
   onJoin: () => startJoin(),
@@ -103,6 +104,68 @@ async function splitOrMerge() {
     ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
   }
 }
+
+/* ------------------------------------------------------------------- tidy up */
+
+/**
+ * A part small enough that it is scenery, not something anyone will point at.
+ *
+ * Judged on physical size relative to the whole model rather than on triangle
+ * count: a speck can be dense and a flat panel can be coarse. Kept generous on
+ * purpose -- Tidy is one button and one undo, so it is better to leave a
+ * borderline part alone than to eat something real.
+ */
+const TIDY_FRACTION = 0.02;
+
+function junkParts(): PartMeta[] {
+  const metas = doc.list();
+  if (metas.length < 2) return [];
+  const box = new THREE.Box3();
+  const spans = new Map<string, number>();
+  let modelSpan = 0;
+  const whole = new THREE.Box3();
+  for (const m of metas) {
+    const geo = getGeometry(m.id);
+    if (!geo) continue;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const size = geo.boundingBox!.getSize(new THREE.Vector3())
+      .multiply(new THREE.Vector3(...m.transform.scale));
+    spans.set(m.id, size.length());
+    const p = new THREE.Vector3(...m.transform.position);
+    whole.expandByPoint(p.clone().add(size.clone().multiplyScalar(0.5)));
+    whole.expandByPoint(p.clone().sub(size.clone().multiplyScalar(0.5)));
+  }
+  modelSpan = whole.getSize(new THREE.Vector3()).length() || 1;
+  void box;
+  const cutoff = modelSpan * TIDY_FRACTION;
+  // Never offer to delete everything: the biggest part is always safe.
+  const biggest = metas.reduce((a, b) => (b.triCount > a.triCount ? b : a));
+  return metas.filter(m => m !== biggest && (spans.get(m.id) ?? Infinity) < cutoff);
+}
+
+function refreshTidy() {
+  const btn = document.getElementById('tidybtn') as HTMLButtonElement;
+  const junk = junkParts();
+  btn.style.display = junk.length ? 'inline-block' : 'none';
+  btn.textContent = junk.length ? `Tidy (${junk.length})` : 'Tidy';
+}
+
+/** Delete every part too small to matter, as ONE undoable action. */
+function tidy() {
+  const junk = junkParts();
+  if (!junk.length) { ui.showToast('Nothing to tidy'); return; }
+  const tris = junk.reduce((s, m) => s + m.triCount, 0);
+  doc.beginBatch();
+  for (const m of junk) doc.deletePart(m.id);
+  doc.endBatch();
+  refreshTidy();
+  viewport.refreshModelBounds();
+  ui.showToast(`Removed ${junk.length} tiny part${junk.length > 1 ? 's' : ''} (${tris.toLocaleString()} triangles) — Undo brings them back`);
+}
+
+doc.on(e => {
+  if (e.type === 'parts-added' || e.type === 'part-removed' || e.type === 'reset') refreshTidy();
+});
 
 /* ---------------------------------------------------------- touch to select */
 
@@ -346,7 +409,12 @@ async function installSplit(geometry: THREE.BufferGeometry, baseName: string) {
   const geos = buildGroupGeometries(geometry, res.triGroup, res.groupCount);
   geometry.dispose();
   const loaded: LoadedPart[] = geos.map((g, i) => ({
-    name: res.groupCount > 1 ? `${baseName} ${i + 1}` : baseName, geometry: g,
+    // The debris bucket is named for what it is and for how much it swept up,
+    // so clearing a hundred specks is one Delete rather than a hundred.
+    name: res.debrisGroup === i
+      ? `Loose bits (${res.debrisPieces} pieces)`
+      : (res.groupCount > 1 ? `${baseName} ${i + 1}` : baseName),
+    geometry: g,
   }));
   installParts(loaded);
 }
@@ -380,7 +448,25 @@ function installParts(parts: { name: string; geometry: THREE.BufferGeometry }[])
   if (Number.isFinite(minY) && minY !== 0) for (const m of metas) m.transform.position[1] -= minY;
   doc.addParts(metas);
   viewport.fitCamera();
-  viewport.setPickEnabled(doc.count() === 1);
+  const pickable = doc.count() === 1;
+  viewport.setPickEnabled(pickable);
+
+  // Warm the touch-select index now rather than on the first tap. The analysis
+  // takes ~17s on a two-million-triangle model, and a tap that appears to do
+  // nothing for that long reads as broken. Starting at load hides it behind the
+  // time it takes someone to orient the camera; it runs in a worker either way.
+  if (pickable) {
+    const only = doc.list()[0];
+    const geo = getGeometry(only.id);
+    if (geo && only.triCount > 50_000) {
+      ui.showToast(`Reading the shape of ${only.name} — look around meanwhile`);
+      pickIndexFor(only.id, geo)
+        .then(() => ui.showToast('Ready — touch any part to lift it out'))
+        .catch(err => console.error('pick index failed', err));
+    } else if (geo) {
+      pickIndexFor(only.id, geo).catch(err => console.error('pick index failed', err));
+    }
+  }
 }
 
 // Gesture regression tests, dev only: http://localhost:5199/?gtest=1

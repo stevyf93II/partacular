@@ -15,9 +15,10 @@ export function loadCorpus(file = 'corpus.json') {
 }
 
 /** Part sizes, largest first. */
-function partSizes(res) {
+function partSizes(res, excludeGroup = -1) {
   const size = new Map();
   for (const g of res.triGroup) size.set(g, (size.get(g) || 0) + 1);
+  if (excludeGroup >= 0) size.delete(excludeGroup);
   return [...size.values()].sort((a, b) => b - a);
 }
 
@@ -27,7 +28,9 @@ function labelHash(res) {
 }
 
 function score(entry, res, tris) {
-  const sizes = partSizes(res);
+  // The debris group is deliberately small -- it exists so a hundred scraps
+  // arrive as one deletable part. Counting it as a sliver would punish the fix.
+  const sizes = partSizes(res, res.debrisGroup);
   const e = entry.expect || {};
   const problems = [];
   if (e.minParts !== undefined && sizes.length < e.minParts) problems.push(`only ${sizes.length} parts, wanted at least ${e.minParts}`);

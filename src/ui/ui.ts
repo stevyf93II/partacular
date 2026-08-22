@@ -11,6 +11,7 @@ export interface UIHooks {
   onSplitToggle: () => void;
   onCarve: () => void;
   onJoin: () => void;
+  onTidy: () => void;
   onPickTake: () => void;
   onPickCancel: () => void;
   onPickStep: (delta: number) => void;
@@ -45,6 +46,7 @@ export function initUI(doc: Document, hooks: UIHooks) {
   $('pillcopy').addEventListener('click', () => hooks.onDuplicate());
   $('pillcolor').addEventListener('click', () => hooks.onRecolor());
   $('fitbtn').addEventListener('click', () => hooks.onFit());
+  $('tidybtn').addEventListener('click', () => hooks.onTidy());
   $('splitbtn').addEventListener('click', () => hooks.onSplitToggle());
   const sheet = $('sheet');
   $('savebtn').addEventListener('click', () => sheet.classList.add('show'));
