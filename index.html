@@ -94,6 +94,54 @@
     .axisrow .sizename { font-size:12px; }
     #sizerow button.btn { padding:4px 12px; font-size:12px; }
   }
+
+  /* ---- parts list: a slide-in drawer so a hundred parts stay manageable ---- */
+  #partspanel {
+    /* Sits BELOW the top bar, not over it: covering Save and Open the moment
+       you open the parts list is how you strand someone mid-edit. */
+    position:fixed; top:58px; right:0; bottom:0; width:min(340px, 88vw); z-index:30;
+    background:#12151c; border-left:1px solid #232838; border-top:1px solid #232838;
+    border-radius:12px 0 0 0;
+    display:flex; flex-direction:column;
+    transform:translateX(100%); transition:transform .18s ease;
+    pointer-events:auto;
+  }
+  #partspanel.show { transform:translateX(0); }
+  #partspanel header {
+    display:flex; align-items:center; gap:8px; padding:12px 14px;
+    border-bottom:1px solid #232838; flex:none;
+  }
+  #partspanel header .t { font-weight:700; font-size:14px; }
+  #partspanel header .c { color:#7c869c; font-size:12px; }
+  #partslist { flex:1; overflow-y:auto; overscroll-behavior:contain; padding:6px; }
+  .prow {
+    display:flex; align-items:center; gap:10px; width:100%;
+    background:none; border:1px solid transparent; border-radius:10px;
+    padding:9px 10px; text-align:left; color:var(--text); cursor:pointer;
+    min-height:46px; font:inherit;
+  }
+  .prow:hover { background:#1a1f2b; }
+  .prow.on { background:#17314e; border-color:#2f6ba8; }
+  .prow.off { opacity:.42; }
+  .prow .sw { width:14px; height:14px; border-radius:4px; flex:none; }
+  .prow .nm { flex:1; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .prow .ct { font-size:11px; color:#7c869c; font-variant-numeric:tabular-nums; }
+  .prow .eye { font-size:12px; color:#7c869c; flex:none; }
+  #partsbulk {
+    flex:none; border-top:1px solid #232838; padding:10px 12px;
+    display:none; gap:8px; flex-wrap:wrap; align-items:center;
+  }
+  #partsbulk.show { display:flex; }
+  #partsbulk .n { font-size:12px; color:#9aa4b8; flex:1; }
+  #partsbulk button { padding:8px 12px; font-size:12px; border-radius:9px; }
+  #partsfoot { flex:none; padding:8px 12px 12px; display:flex; gap:8px; border-top:1px solid #232838; }
+  #partsfoot button { flex:1; padding:8px; font-size:12px; border-radius:9px; }
+  @media (max-width:520px) {
+    #partspanel { width:100%; top:auto; height:min(62vh, 520px); border-left:none; border-top:1px solid #232838;
+                  transform:translateY(100%); border-radius:16px 16px 0 0; }
+    #partspanel.show { transform:translateY(0); }
+    #partspanel.show { transform:translateY(0); }
+  }
 </style>
 </head>
 <body>
@@ -104,15 +152,52 @@
     <div class="spacer"></div>
     <button class="btn" id="undo">Undo</button>
     <button class="btn" id="splitbtn" style="display:none">Split</button>
+    <button class="btn" id="partsbtn">Parts</button>
+    <button class="btn" id="tidybtn" style="display:none">Tidy</button>
     <button class="btn" id="fitbtn">Fit</button>
     <button class="btn" id="savebtn">Save</button>
     <button class="btn" id="openbtn">Open</button>
   </div>
+  <!-- Parts list. Multi-select with a tap; bulk actions apply to the lot. -->
+  <div id="partspanel">
+    <header>
+      <span class="t">Parts</span>
+      <span class="c" id="partspanelcount">0</span>
+      <span style="flex:1"></span>
+      <button class="btn" id="partsclose">Close</button>
+    </header>
+    <div id="partslist"></div>
+    <div id="partsbulk">
+      <span class="n" id="partsbulkn">0 selected</span>
+      <button class="btn" id="bulkhide">Hide</button>
+      <button class="btn" id="bulkmerge">Merge</button>
+      <button class="btn del" id="bulkdelete" style="background:var(--danger);color:#fff;border-color:var(--danger)">Delete</button>
+    </div>
+    <div id="partsfoot">
+      <button class="btn" id="selectall">Select all</button>
+      <button class="btn" id="selectnone">Select none</button>
+      <button class="btn" id="selecttiny">Select tiny</button>
+    </div>
+  </div>
+
   <div class="bottombar">
+    <!-- Touch-select: what is currently held, and the one action on it. -->
+    <div id="pickbar" class="explode-row" style="display:none">
+      <div class="pname" id="pickinfo">piece</div>
+      <button class="hide" id="pickless">Less</button>
+      <button class="hide" id="pickmore">More</button>
+      <button class="btn primary" id="picktake">Take piece</button>
+      <button class="hide" id="pickcolor" title="Take it out and recolour it">Colour</button>
+      <button class="del" id="pickdelete" style="background:var(--danger);color:#fff">Delete</button>
+      <button class="hide" id="pickcancel">Cancel</button>
+    </div>
+
     <div id="pill" class="explode-row">
       <div class="pname" id="pillname">part</div>
       <button id="pillcolor" title="Change color"></button>
       <button class="hide" id="pillsize">Size</button>
+      <button class="hide" id="pillcarve" title="Draw to separate a piece">Carve</button>
+      <button class="hide" id="pilljoin" title="Tap another part to merge">Join</button>
       <button class="hide" id="pillcopy">Copy</button>
       <button class="hide" id="pillrot">⟳ 45°</button>
       <button class="hide" id="pillhide">Hide</button>

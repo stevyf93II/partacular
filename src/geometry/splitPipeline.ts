@@ -9,7 +9,7 @@ import type { PipelineConfig } from './segmentation.config.js';
 export function assertPipelineConfig(cfg: Partial<PipelineConfig> | undefined): asserts cfg is PipelineConfig {
   assertSegmentConfig(cfg);
   const c = cfg as Partial<PipelineConfig>;
-  for (const k of ['refineAboveTris', 'maxParts'] as const) {
+  for (const k of ['refineAboveTris', 'maxParts', 'debrisBelowFrac'] as const) {
     const v = c[k];
     if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`pipeline config missing tuned knob: ${k}`);
   }
@@ -23,7 +23,10 @@ export function smartSplit(
 ): SplitResult {
   assertPipelineConfig(cfg);
   let res: SplitResult = splitConnectedComponents({ positions, index });
-  res = capGroups(res, cfg.maxParts);
+  res = capGroups(res, cfg.maxParts, cfg.debrisBelowFrac, { positions, index });
+  // Refinement below never touches the debris bucket (it is far too small), so
+  // its id survives and can be handed to the final pass.
+  const debrisId = res.debrisGroup ?? -1;
 
   const triCount = res.triGroup.length;
   const sizes = new Map<number, number>();
@@ -56,5 +59,7 @@ export function smartSplit(
   }
   const counts = new Uint32Array(nextGroup);
   for (let t = 0; t < triCount; t++) counts[newTriGroup[t]]++;
-  return capGroups({ triGroup: newTriGroup, groupCount: nextGroup, groupTriCounts: counts }, cfg.maxParts);
+  return capGroups(
+    { triGroup: newTriGroup, groupCount: nextGroup, groupTriCounts: counts },
+    cfg.maxParts, cfg.debrisBelowFrac, { positions, index }, debrisId);
 }

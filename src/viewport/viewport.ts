@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { Document } from '../core/document';
 import { getGeometry } from '../geometry/store';
+import { PickIndex, Touched, cachedPickIndex, maskFor, pickIndexFor, rungCount, touchAt } from '../geometry/pickClient';
 
 // BVH-accelerated raycasting: without this, every tap tests every triangle —
 // a 2M-tri AI scan made selection take hundreds of ms per pointer event
@@ -13,7 +14,25 @@ THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 interface PartVisual { mesh: THREE.Mesh; baseCenter: THREE.Vector3; explodeDir: THREE.Vector3; }
 
-type GestureMode = 'none' | 'camera' | 'move' | 'pinch';
+type GestureMode = 'none' | 'camera' | 'move' | 'pinch' | 'stroke' | 'picking';
+
+/** A live touch-selection: what was touched, and how far out it has been grown. */
+export interface PickState {
+  partId: string;
+  index: PickIndex;
+  touch: Touched;
+  level: number;
+  triangles: number;
+}
+
+/** Above this the highlight overlay is not worth building; the whole part lights instead. */
+const HIGHLIGHT_CAP = 800_000;
+
+/** A repair the user armed from the UI but has not yet drawn or picked. */
+type RepairMode =
+  | null
+  | { kind: 'lasso'; done: (strokeNDC: Float32Array, mvp: Float32Array) => void }
+  | { kind: 'merge'; done: (otherId: string) => void };
 
 export class Viewport {
   private renderer: THREE.WebGLRenderer;
@@ -27,6 +46,31 @@ export class Viewport {
   private gridSize = 10;
   private modelRadius = 1;
   private lastTap = { x: -999, y: -999, hits: [] as string[], cursor: 0 };
+
+  // repair: freehand stroke capture, drawn on a 2D canvas above the GL canvas
+  private overlay!: HTMLCanvasElement;
+  private octx!: CanvasRenderingContext2D;
+  private repairMode: RepairMode = null;
+  private strokePx: number[] = [];
+
+  // touch-to-select
+  private pick: PickState | null = null;
+  private highlight: THREE.Mesh | null = null;
+  private pickLevelAtGrab = 0;
+  /** finger landed on the lit piece; a drag from here pulls it out */
+  private pullArmed = false;
+  /** told when the live selection changes, so the UI can show what is held */
+  onPick: (state: PickState | null) => void = () => {};
+  /** told when a part's index has to be built first (slow, once per part) */
+  onPickPending: (partId: string, ready: boolean) => void = () => {};
+  /**
+   * Asked to turn the held selection into a real part, returning its id.
+   *
+   * Lives outside the viewport because it mutates the document, but has to be
+   * callable mid-gesture: grabbing a highlighted piece and pulling it away is
+   * one motion, not select-then-press-a-button-then-drag.
+   */
+  onExtractRequest: () => string | null = () => null;
 
   // gesture state
   private pointers = new Map<number, { x: number; y: number }>();
@@ -44,6 +88,14 @@ export class Viewport {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     container.appendChild(this.renderer.domElement);
+
+    // Stroke overlay. A separate 2D canvas keeps freehand ink out of the GL
+    // pipeline entirely -- no scene objects, no re-render per pointer sample.
+    this.overlay = document.createElement('canvas');
+    this.overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5';
+    container.appendChild(this.overlay);
+    this.octx = this.overlay.getContext('2d')!;
+    this.sizeOverlay();
 
     this.scene.background = new THREE.Color(0x0d0f14);
     // Guard the initial aspect too: a hidden/zero-size window at load time gives 0/0 = NaN.
@@ -69,6 +121,7 @@ export class Viewport {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
+      this.sizeOverlay();
     });
 
     // Gesture routing (capture phase so we can mute OrbitControls before it reacts):
@@ -116,6 +169,97 @@ export class Viewport {
     loop();
   }
 
+  // ---------- repair modes ----------
+  private sizeOverlay() {
+    const dpr = Math.min(devicePixelRatio, 2);
+    this.overlay.width = Math.max(1, Math.floor(innerWidth * dpr));
+    this.overlay.height = Math.max(1, Math.floor(innerHeight * dpr));
+    this.overlay.style.width = innerWidth + 'px';
+    this.overlay.style.height = innerHeight + 'px';
+    this.octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  isRepairing(): boolean { return this.repairMode !== null; }
+
+  /** Arm freehand mode: the next drag draws a lasso or cut over the selection. */
+  beginLasso(done: (strokeNDC: Float32Array, mvp: Float32Array) => void) {
+    this.repairMode = { kind: 'lasso', done };
+    this.controls.enabled = false;
+  }
+
+  /** Arm merge mode: the next tap on another part reports its id. */
+  beginMerge(done: (otherId: string) => void) {
+    this.repairMode = { kind: 'merge', done };
+  }
+
+  cancelRepair() {
+    this.repairMode = null;
+    this.strokePx = [];
+    this.clearOverlay();
+    this.controls.enabled = true;
+  }
+
+  private clearOverlay() { this.octx.clearRect(0, 0, innerWidth, innerHeight); }
+
+  private drawStroke() {
+    this.clearOverlay();
+    const n = this.strokePx.length / 2;
+    if (n < 2) return;
+    const c = this.octx;
+    c.lineWidth = 2.5; c.lineJoin = 'round'; c.lineCap = 'round';
+    c.strokeStyle = '#4da3ff';
+    c.beginPath();
+    c.moveTo(this.strokePx[0], this.strokePx[1]);
+    for (let i = 1; i < n; i++) c.lineTo(this.strokePx[i * 2], this.strokePx[i * 2 + 1]);
+    c.stroke();
+    // A dashed chord back to the start shows, while the finger is still down,
+    // that closing the loop turns the stroke into a region select.
+    if (n > 4) {
+      c.save();
+      c.setLineDash([5, 5]);
+      c.strokeStyle = 'rgba(77,163,255,0.35)';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(this.strokePx[(n - 1) * 2], this.strokePx[(n - 1) * 2 + 1]);
+      c.lineTo(this.strokePx[0], this.strokePx[1]);
+      c.stroke();
+      c.restore();
+    }
+  }
+
+  /** MVP for a part AS CURRENTLY DRAWN, explode offset included. */
+  private mvpFor(id: string): Float32Array | null {
+    const v = this.visuals.get(id); if (!v) return null;
+    v.mesh.updateMatrixWorld(true);
+    this.camera.updateMatrixWorld(true);
+    const m = new THREE.Matrix4()
+      .multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse)
+      .multiply(v.mesh.matrixWorld);
+    return new Float32Array(m.elements);
+  }
+
+  private finishStroke() {
+    const mode = this.repairMode;
+    const sel = this.doc.selectedId;
+    this.clearOverlay();
+    if (!mode || mode.kind !== 'lasso' || !sel || this.strokePx.length < 6) {
+      this.cancelRepair();
+      return;
+    }
+    const mvp = this.mvpFor(sel);
+    if (!mvp) { this.cancelRepair(); return; }
+    const n = this.strokePx.length / 2;
+    const ndc = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      ndc[i * 2] = (this.strokePx[i * 2] / innerWidth) * 2 - 1;
+      ndc[i * 2 + 1] = -(this.strokePx[i * 2 + 1] / innerHeight) * 2 + 1;
+    }
+    this.repairMode = null;
+    this.strokePx = [];
+    this.controls.enabled = true;
+    mode.done(ndc, mvp);
+  }
+
   // ---------- gesture handlers ----------
   private selectedVisual(): PartVisual | null {
     return this.doc.selectedId ? this.visuals.get(this.doc.selectedId) ?? null : null;
@@ -131,6 +275,158 @@ export class Viewport {
     return ids;
   }
 
+  /** First hit with its triangle index — touch-select needs to know WHICH triangle. */
+  private raycastFace(x: number, y: number): { partId: string; face: number } | null {
+    const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const meshes = [...this.visuals.values()].filter(v => v.mesh.visible).map(v => v.mesh);
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    if (!hit || hit.faceIndex == null) return null;
+    return { partId: (hit.object as THREE.Mesh).userData.partId, face: hit.faceIndex };
+  }
+
+  // ---------- touch to select ----------
+
+  /**
+   * Whether a tap reaches INTO a part or just selects it.
+   *
+   * Split is the switch. Before it, the model is one fused mass and "select the
+   * whole thing" says nothing, so a tap must mean a piece of it. After Split the
+   * parts are real and a tap selects them, exactly as it always did.
+   *
+   * Deliberately not keyed on part count: taking a piece out leaves two parts
+   * but the remainder is still a fused mass, and tapping it again has to keep
+   * working.
+   */
+  private pickEnabled = true;
+  setPickEnabled(on: boolean) {
+    this.pickEnabled = on;
+    if (!on) this.clearPick();
+  }
+  private wantsPick(_partId: string): boolean { return this.pickEnabled; }
+
+  private beginPick(partId: string, face: number) {
+    const index = cachedPickIndex(partId);
+    if (!index) {
+      // First touch on this part: the analysis is slow, so kick it off and say so.
+      const geo = getGeometry(partId);
+      if (!geo) return;
+      this.onPickPending(partId, false);
+      pickIndexFor(partId, geo)
+        .then(() => this.onPickPending(partId, true))
+        .catch(err => { console.error(err); this.onPickPending(partId, true); });
+      return;
+    }
+    const touch = touchAt(index, face);
+    if (!touch) return;
+    this.pick = { partId, index, touch, level: touch.rung, triangles: 0 };
+    this.pickLevelAtGrab = touch.rung;
+    this.applyPick();
+  }
+
+  /** Grow or shrink the held selection. */
+  setPickLevel(level: number) {
+    if (!this.pick) return;
+    const clamped = Math.max(0, Math.min(rungCount(this.pick.touch), level));
+    if (clamped === this.pick.level) return;
+    this.pick.level = clamped;
+    this.applyPick();
+  }
+
+  clearPick() {
+    if (this.highlight) {
+      this.scene.remove(this.highlight);
+      this.highlight.geometry.dispose();
+      (this.highlight.material as THREE.Material).dispose();
+      this.highlight = null;
+    }
+    this.pick = null;
+    this.applySelectionStyle();
+    this.onPick(null);
+  }
+
+  currentPick(): PickState | null { return this.pick; }
+
+  /** The held selection as a triangle mask, for turning it into a real part. */
+  pickMask(): Uint8Array | null {
+    if (!this.pick) return null;
+    return maskFor(this.pick.index, this.pick.touch, this.pick.level);
+  }
+
+  private applyPick() {
+    const pk = this.pick;
+    if (!pk) return;
+    const mask = maskFor(pk.index, pk.touch, pk.level);
+    let count = 0;
+    for (let i = 0; i < mask.length; i++) count += mask[i];
+    pk.triangles = count;
+
+    if (this.highlight) {
+      this.scene.remove(this.highlight);
+      this.highlight.geometry.dispose();
+      (this.highlight.material as THREE.Material).dispose();
+      this.highlight = null;
+    }
+
+    const v = this.visuals.get(pk.partId);
+    const base = getGeometry(pk.partId);
+    if (!v || !base) return;
+
+    // Everything not held drops back; the held piece is the only lit thing.
+    for (const [id, vis] of this.visuals) {
+      const mat = vis.mesh.material as THREE.MeshStandardMaterial;
+      mat.opacity = id === pk.partId ? 0.16 : 0.1;
+      mat.emissive.setHex(0x000000);
+    }
+
+    if (count > 0 && count <= HIGHLIGHT_CAP) {
+      const geo = subsetGeometry(base, mask, count);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0x4da3ff, roughness: 0.5, metalness: 0.1,
+        emissive: 0x143a66, side: THREE.DoubleSide,
+        // The overlay is a copy of triangles that are still in the base mesh, so
+        // it is exactly coplanar with them. Without a depth bias the two fight
+        // for every pixel and the selection reads as torn.
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      }));
+      mesh.position.copy(v.mesh.position);
+      mesh.rotation.copy(v.mesh.rotation);
+      mesh.scale.copy(v.mesh.scale);
+      this.scene.add(mesh);
+      this.highlight = mesh;
+    } else if (count > HIGHLIGHT_CAP) {
+      // Too big to be worth a copy: light the whole part instead of an overlay.
+      const mat = v.mesh.material as THREE.MeshStandardMaterial;
+      mat.opacity = 1;
+      mat.emissive.setHex(0x143a66);
+    }
+    this.onPick(pk);
+  }
+
+  /** Does this screen point land on the lit piece rather than the rest of the part? */
+  private hitsHighlight(x: number, y: number): boolean {
+    if (!this.highlight) return false;
+    const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.intersectObject(this.highlight, false).length > 0;
+  }
+
+  /** Start a move gesture on a part, as if the finger had landed on it. */
+  private beginMoveOn(id: string, x: number, y: number) {
+    const m = this.doc.get(id);
+    if (!m) { this.mode = 'camera'; return; }
+    this.doc.select(id);
+    this.mode = 'move';
+    this.controls.enabled = false;
+    const worldCenter = new THREE.Vector3(...m.transform.position);
+    const viewDir = new THREE.Vector3();
+    this.camera.getWorldDirection(viewDir);
+    this.dragPlane.setFromNormalAndCoplanarPoint(viewDir, worldCenter);
+    this.planeHit(x, y, this.dragStartHit);
+    this.dragStartPos = [...m.transform.position];
+    this.doc.beginTransform(id);
+  }
+
   private planeHit(x: number, y: number, out: THREE.Vector3): boolean {
     const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
@@ -140,17 +436,57 @@ export class Viewport {
   private resetGestures() {
     this.pointers.clear();
     if (this.mode === 'move' || this.mode === 'pinch') this.doc.endTransform();
+    if (this.mode === 'stroke') { this.strokePx = []; this.clearOverlay(); }
+    this.pullArmed = false;
     this.mode = 'none';
+    this.repairMode = null;
     this.controls.enabled = true;
   }
 
   private onPointerDown(e: PointerEvent) {
     try { this.renderer.domElement.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.repairMode && this.repairMode.kind === 'lasso' && this.pointers.size === 1) {
+      this.mode = 'stroke';
+      this.controls.enabled = false;
+      this.strokePx = [e.clientX, e.clientY];
+      this.downX = e.clientX; this.downY = e.clientY;
+      this.downT = performance.now(); this.moved = false;
+      return;
+    }
     if (this.pointers.size === 1) {
       this.downX = e.clientX; this.downY = e.clientY; this.downT = performance.now(); this.moved = false;
       const sel = this.doc.selectedId;
       const hits = this.raycastAt(e.clientX, e.clientY);
+
+      // A held selection takes the gesture. Landing ON the lit piece pulls it
+      // out and drags it; landing on the rest of the part adjusts how much is
+      // held. Both start from the same touch, which is what "pull that piece
+      // away" has to mean.
+      if (this.pick && hits.includes(this.pick.partId)) {
+        this.controls.enabled = false;
+        this.mode = 'picking';
+        this.pickLevelAtGrab = this.pick.level;
+        // Landing on the lit piece ARMS a pull, but does not perform it: a tap
+        // has to leave the selection alone, or looking at what you have picked
+        // would keep tearing it out of the model.
+        this.pullArmed = !!this.highlight && this.hitsHighlight(e.clientX, e.clientY);
+        return;
+      }
+
+      // Order matters. Dragging a part you already selected must still move it,
+      // so that check comes first; anything else on a fused model reaches INSIDE
+      // the part rather than selecting the whole of it.
+      if (!(sel && hits.includes(sel)) && hits.length && this.wantsPick(hits[0])) {
+        const face = this.raycastFace(e.clientX, e.clientY);
+        if (face) {
+          this.mode = 'picking';
+          this.controls.enabled = false;
+          this.beginPick(face.partId, face.face);
+          return;
+        }
+      }
+
       if (sel && hits.includes(sel)) {
         // start MOVE on the selected part
         this.mode = 'move';
@@ -183,6 +519,31 @@ export class Viewport {
     const p = this.pointers.get(e.pointerId); if (!p) return;
     p.x = e.clientX; p.y = e.clientY;
     if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 8) this.moved = true;
+    if (this.mode === 'picking') {
+      if (!this.pick) return;
+      if (this.pullArmed) {
+        // Wait for a real drag before committing; below the slop this is still
+        // a tap that happened to land on the piece.
+        if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) < 8) return;
+        this.pullArmed = false;
+        const newId = this.onExtractRequest();
+        if (newId) { this.beginMoveOn(newId, this.downX, this.downY); this.onPointerMove(e); }
+        return;
+      }
+      // Up grows, down shrinks. A rung is now one neighbouring basin rather
+      // than a whole cluster, so the travel per rung is shorter to match.
+      this.setPickLevel(this.pickLevelAtGrab + Math.round((this.downY - e.clientY) / 22));
+      return;
+    }
+    if (this.mode === 'stroke') {
+      const n = this.strokePx.length;
+      // Drop samples closer than 2px: they add cost and jitter, not shape.
+      if (n < 2 || Math.hypot(e.clientX - this.strokePx[n - 2], e.clientY - this.strokePx[n - 1]) > 2) {
+        this.strokePx.push(e.clientX, e.clientY);
+        this.drawStroke();
+      }
+      return;
+    }
     const sel = this.doc.selectedId;
     if (!sel) return;
     if (this.mode === 'move' && this.pointers.size === 1) {
@@ -206,6 +567,19 @@ export class Viewport {
   private onPointerUp(e: PointerEvent) {
     if (!this.pointers.has(e.pointerId)) return; // already handled (canvas + window both listen)
     this.pointers.delete(e.pointerId);
+    if (this.mode === 'stroke') {
+      if (this.pointers.size > 0) return;
+      this.mode = 'none';
+      this.finishStroke();
+      return;
+    }
+    if (this.mode === 'picking') {
+      if (this.pointers.size > 0) return;
+      this.mode = 'none';
+      this.pullArmed = false;
+      this.controls.enabled = true;
+      return;
+    }
     if (this.pointers.size > 0) {
       // dropped one finger of a pinch: fall back to move with remaining finger re-anchored
       if (this.mode === 'pinch' && this.pointers.size === 1 && this.doc.selectedId) {
@@ -254,6 +628,7 @@ export class Viewport {
 
   // ---------- visuals ----------
   private clearVisuals() {
+    if (this.pick) this.clearPick();
     for (const v of this.visuals.values()) { this.scene.remove(v.mesh); (v.mesh.material as THREE.Material).dispose(); }
     this.visuals.clear();
   }
@@ -273,6 +648,7 @@ export class Viewport {
   }
 
   private removeVisual(id: string) {
+    if (this.pick && this.pick.partId === id) this.clearPick();
     const v = this.visuals.get(id); if (!v) return;
     this.scene.remove(v.mesh); this.visuals.delete(id);
     this.applySelectionStyle();
@@ -342,6 +718,21 @@ export class Viewport {
 
   private handleTap(x: number, y: number) {
     const hitIds = this.raycastAt(x, y);
+    if (this.pick && (hitIds.length === 0 || !hitIds.includes(this.pick.partId))) {
+      this.clearPick();
+      if (hitIds.length === 0) return;
+    }
+    // A tap that took hold of a piece has already said what it meant. Falling
+    // through would ALSO select the whole part, and then the next tap would try
+    // to move that part instead of reaching inside it again.
+    if (this.pick) return;
+    const mode = this.repairMode;
+    if (mode && mode.kind === 'merge') {
+      const other = hitIds.find(id => id !== this.doc.selectedId);
+      this.repairMode = null;
+      if (other) mode.done(other);
+      return;
+    }
     if (hitIds.length === 0) { this.doc.select(null); this.lastTap.hits = []; return; }
     const near = Math.hypot(x - this.lastTap.x, y - this.lastTap.y) < 24;
     const sameStack = near && JSON.stringify(hitIds) === JSON.stringify(this.lastTap.hits);
@@ -351,12 +742,36 @@ export class Viewport {
   }
 
   private applySelectionStyle() {
-    const sel = this.doc.selectedId;
+    if (this.pick) return; // a held touch-selection owns the styling
+    const doc = this.doc;
+    const any = doc.selectedIds.size > 0;
     for (const [id, v] of this.visuals) {
       const mat = v.mesh.material as THREE.MeshStandardMaterial;
-      if (sel === null) { mat.opacity = 1; mat.emissive.setHex(0x000000); }
-      else if (id === sel) { mat.opacity = 1; mat.emissive.setHex(0x1c3f66); }
-      else { mat.opacity = 0.22; mat.emissive.setHex(0x000000); }
+      if (!any) { mat.opacity = 1; mat.emissive.setHex(0x000000); continue; }
+      if (!doc.isSelected(id)) { mat.opacity = 0.22; mat.emissive.setHex(0x000000); continue; }
+      mat.opacity = 1;
+      // The gesture target glows brighter than the rest of the selection, so it
+      // is obvious which one a drag is about to move.
+      mat.emissive.setHex(id === doc.selectedId ? 0x1c3f66 : 0x11293f);
     }
   }
+}
+
+/** The masked triangles of a geometry, copied out as a standalone soup. */
+function subsetGeometry(src: THREE.BufferGeometry, mask: Uint8Array, count: number): THREE.BufferGeometry {
+  const pos = src.getAttribute('position') as THREE.BufferAttribute;
+  const index = src.getIndex();
+  const out = new Float32Array(count * 9);
+  let o = 0;
+  for (let t = 0; t < mask.length; t++) {
+    if (!mask[t]) continue;
+    for (let c = 0; c < 3; c++) {
+      const v = index ? index.getX(t * 3 + c) : t * 3 + c;
+      out[o++] = pos.getX(v); out[o++] = pos.getY(v); out[o++] = pos.getZ(v);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(out, 3));
+  g.computeVertexNormals();
+  return g;
 }

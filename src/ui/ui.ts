@@ -9,6 +9,18 @@ export interface UIHooks {
   onExport: (kind: 'glb' | 'stl' | '3mf') => void;
   onFit: () => void;
   onSplitToggle: () => void;
+  onCarve: () => void;
+  onJoin: () => void;
+  onTidy: () => void;
+  onBulkDelete: () => void;
+  onBulkHide: () => void;
+  onBulkMerge: () => void;
+  onSelectTiny: () => void;
+  onPickTake: () => void;
+  onPickDelete: () => void;
+  onPickColor: () => void;
+  onPickCancel: () => void;
+  onPickStep: (delta: number) => void;
 }
 
 export function initUI(doc: Document, hooks: UIHooks) {
@@ -31,9 +43,81 @@ export function initUI(doc: Document, hooks: UIHooks) {
 
   $('pilldel').addEventListener('click', () => { if (doc.selectedId) doc.deletePart(doc.selectedId); });
   $('pillrot').addEventListener('click', () => hooks.onRotate());
+  $('picktake').addEventListener('click', () => hooks.onPickTake());
+  $('pickdelete').addEventListener('click', () => hooks.onPickDelete());
+  $('pickcolor').addEventListener('click', () => hooks.onPickColor());
+  $('pickcancel').addEventListener('click', () => hooks.onPickCancel());
+  $('pickmore').addEventListener('click', () => hooks.onPickStep(1));
+  $('pickless').addEventListener('click', () => hooks.onPickStep(-1));
+  $('pillcarve').addEventListener('click', () => hooks.onCarve());
+  $('pilljoin').addEventListener('click', () => hooks.onJoin());
   $('pillcopy').addEventListener('click', () => hooks.onDuplicate());
   $('pillcolor').addEventListener('click', () => hooks.onRecolor());
   $('fitbtn').addEventListener('click', () => hooks.onFit());
+  $('tidybtn').addEventListener('click', () => hooks.onTidy());
+
+  // ---- parts list -----------------------------------------------------------
+  const panel = $('partspanel');
+  const list = $('partslist');
+  const bulk = $('partsbulk');
+  const openPanel = (on: boolean) => panel.classList.toggle('show', on);
+  $('partsbtn').addEventListener('click', () => openPanel(!panel.classList.contains('show')));
+  $('partsclose').addEventListener('click', () => openPanel(false));
+  $('selectall').addEventListener('click', () => doc.selectMany(doc.list().map(m => m.id)));
+  $('selectnone').addEventListener('click', () => doc.select(null));
+  $('selecttiny').addEventListener('click', () => hooks.onSelectTiny());
+  $('bulkdelete').addEventListener('click', () => hooks.onBulkDelete());
+  $('bulkhide').addEventListener('click', () => hooks.onBulkHide());
+  $('bulkmerge').addEventListener('click', () => hooks.onBulkMerge());
+
+  /**
+   * Rebuild the list.
+   *
+   * Rows are rebuilt wholesale rather than diffed: a hundred rows is nothing to
+   * build, and any cleverness here would be a source of stale state for no
+   * measurable gain.
+   */
+  function renderParts() {
+    const metas = doc.list();
+    $('partspanelcount').textContent = `${metas.length}`;
+    list.innerHTML = '';
+    for (const m of metas) {
+      const row = document.createElement('button');
+      row.className = 'prow' + (doc.isSelected(m.id) ? ' on' : '') + (m.visible ? '' : ' off');
+      const sw = document.createElement('span');
+      sw.className = 'sw';
+      sw.style.background = '#' + m.color.toString(16).padStart(6, '0');
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = m.name;
+      const ct = document.createElement('span');
+      ct.className = 'ct';
+      ct.textContent = m.triCount.toLocaleString();
+      row.append(sw, nm, ct);
+      if (!m.visible) {
+        const eye = document.createElement('span');
+        eye.className = 'eye';
+        eye.textContent = 'hidden';
+        row.append(eye);
+      }
+      // Tap adds to the selection instead of replacing it: picking out twenty
+      // scraps to delete is the whole reason this list exists.
+      row.addEventListener('click', () => doc.toggleSelect(m.id));
+      list.appendChild(row);
+    }
+    const n = doc.selectedIds.size;
+    bulk.classList.toggle('show', n > 0);
+    $('partsbulkn').textContent = `${n} selected`;
+    ($('bulkmerge') as HTMLButtonElement).disabled = n < 2;
+  }
+
+  doc.on(e => {
+    if (e.type === 'parts-added' || e.type === 'part-removed' || e.type === 'reset'
+      || e.type === 'selection' || e.type === 'part-visibility' || e.type === 'part-color') {
+      renderParts();
+    }
+  });
+  renderParts();
   $('splitbtn').addEventListener('click', () => hooks.onSplitToggle());
   const sheet = $('sheet');
   $('savebtn').addEventListener('click', () => sheet.classList.add('show'));

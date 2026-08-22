@@ -8,7 +8,10 @@
     "preview": "node scripts/preview.mjs",
     "gate": "node scripts/deploy-gate.mjs",
     "deploy-build": "node scripts/deploy-gate.mjs && vite build",
-    "ci-build": "GATE_LITE=1 node scripts/deploy-gate.mjs && node scripts/gen-icons.mjs && vite build"
+    "ci-build": "node scripts/deploy-gate.mjs && node scripts/gen-icons.mjs && vite build",
+    "accept": "node scripts/accept.mjs",
+    "build-tests": "tsc src/geometry/split.ts src/geometry/repair.ts src/geometry/pick.ts src/geometry/segment.ts src/geometry/print.ts src/geometry/segmentation.config.ts src/geometry/splitPipeline.ts --ignoreConfig --outDir dist-test --target es2022 --module esnext --moduleResolution bundler --skipLibCheck",
+    "test": "npm run build-tests && node test/split.test.mjs && node test/repair.test.mjs && node test/pick.test.mjs && node test/print.test.mjs"
   },
   "dependencies": {
     "fflate": "0.8.3",

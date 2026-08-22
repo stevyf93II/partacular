@@ -10,6 +10,15 @@ export interface PipelineConfig extends SegmentConfig {
   refineAboveTris: number;
   /** hard cap on total parts */
   maxParts: number;
+/**
+   * Fraction of the model's own diagonal below which a shell is debris.
+   *
+   * Measured on size, not triangle count: a speck can be dense and a car panel
+   * can be coarse. A shell spanning less than this much of the model cannot be
+   * seen, touched or printed, so it joins one deletable debris part instead of
+   * arriving as its own.
+   */
+  debrisBelowFrac: number;
 }
 
 export const SEGMENTATION_CONFIG: PipelineConfig = {
@@ -21,4 +30,5 @@ export const SEGMENTATION_CONFIG: PipelineConfig = {
   thinnessFactor: 8,
   refineAboveTris: 300000,
   maxParts: 100,
+  debrisBelowFrac: 0.012,
 };

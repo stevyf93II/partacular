@@ -1,0 +1,109 @@
+{
+  "_comment": [
+    "The segmentation corpus. Replaces a single reference model + exact output hash.",
+    "",
+    "Why ranges and not a hash: a hash of one model's per-triangle labels forbids ALL",
+    "change. Any tuning that helps a second model breaks the first model's fingerprint,",
+    "and with only one model in the lockfile there is no way to weigh the trade -- only",
+    "to observe that something moved. That is a ratchet against improvement.",
+    "",
+    "status 'required' -> must stay inside its range; the gate blocks if it does not.",
+    "status 'failing'  -> a known gap, tracked not hidden. Reported loudly, never blocks.",
+    "                     If it starts passing the gate says so and asks you to promote it.",
+    "",
+    "The ratchet now points the right way: quality can only be locked in, never locked out.",
+    "",
+    "The corpus pulls in BOTH directions on purpose. peanut and grooved must split;",
+    "shallowDimple, noisyBall and ball must not. A change that only ever loosens",
+    "merging passes half of these and shatters the other half -- which is exactly what",
+    "happened while fixing peanut, and is why noisyBall exists."
+  ],
+  "fixtures": [
+    {
+      "name": "twoBalls",
+      "status": "required",
+      "expect": {
+        "minParts": 2,
+        "maxParts": 2
+      },
+      "why": "two physically separate spheres \u2014 connected components alone must split these"
+    },
+    {
+      "name": "ball",
+      "status": "required",
+      "expect": {
+        "minParts": 1,
+        "maxParts": 1
+      },
+      "why": "convex everywhere; over-segmenting a smooth sphere means the curvature threshold is chasing noise"
+    },
+    {
+      "name": "shallowDimple",
+      "status": "required",
+      "expect": {
+        "minParts": 1,
+        "maxParts": 1
+      },
+      "why": "a ~8 degree styling dent is not a seam - this is the case boundary-strength merging exists for"
+    },
+    {
+      "name": "noisyBall",
+      "status": "required",
+      "expect": {
+        "minParts": 1,
+        "maxParts": 3
+      },
+      "why": "voxel-staircase texture is noise, not structure; the guard against any change that loosens merging",
+      "note": [
+        "Scoring boundaries by per-FACE curvature, or by a one-ring dilation of it, shatters",
+        "this into 18 parts while still fixing peanut. Reach is as important as the statistic:",
+        "stay on the per-edge smoothed field. See BOUNDARY_PERCENTILE in segment.ts."
+      ]
+    },
+    {
+      "name": "grooved",
+      "status": "required",
+      "expect": {
+        "minParts": 2,
+        "maxParts": 4,
+        "largestFractionMax": 0.75
+      },
+      "why": "a deep groove cut around a bar; must yield two comparable halves, not one bar plus a thin ring"
+    },
+    {
+      "name": "peanut",
+      "status": "failing",
+      "expect": {
+        "minParts": 2,
+        "maxParts": 4
+      },
+      "why": "two lobes meeting at a ~77 degree concave crease - the most obvious split there is",
+      "note": [
+        "KNOWN GAP, deliberately not fixed.",
+        "",
+        "Reading boundary strength at a percentile instead of a mean fixes this. Measured",
+        "against reference/diablo.glb, it also splits the DOOR into its inner and outer",
+        "skin (83423 tris -> 42639 + 40784). Touching the door would then hand you half a",
+        "door, which breaks the core interaction. Not worth a synthetic fixture.",
+        "",
+        "Also measured: on diablo the percentile VALUE is irrelevant -- p50 through p70",
+        "give byte-identical output -- so this cannot be tuned around. It is",
+        "mean-vs-percentile or nothing.",
+        "",
+        "Do not 'fix' this without re-running the gate with reference/diablo.glb present",
+        "and looking at the door in npm run preview."
+      ]
+    }
+  ],
+  "localModels": [
+    {
+      "path": "reference/diablo.glb",
+      "status": "optional",
+      "expect": {
+        "minParts": 12,
+        "maxParts": 40
+      },
+      "why": "the original acceptance model; 49MB and not in git, so it runs only where it exists"
+    }
+  ]
+}

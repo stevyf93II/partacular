@@ -11,7 +11,8 @@ self.onmessage = async (e: MessageEvent) => {
     await MeshoptSimplifier.ready;
     const res = smartSplit(MeshoptSimplifier, positions, index, SEGMENTATION_CONFIG);
     (self as unknown as Worker).postMessage(
-      { jobId, ok: true, triGroup: res.triGroup, groupCount: res.groupCount, groupTriCounts: res.groupTriCounts },
+      { jobId, ok: true, triGroup: res.triGroup, groupCount: res.groupCount, groupTriCounts: res.groupTriCounts,
+        debrisGroup: res.debrisGroup ?? -1, debrisPieces: res.debrisPieces ?? 0 },
       [res.triGroup.buffer as ArrayBuffer]
     );
   } catch (err) {

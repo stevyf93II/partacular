@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 
-export interface SplitOutcome { triGroup: Uint32Array; groupCount: number; groupTriCounts: Uint32Array; }
+export interface SplitOutcome {
+  triGroup: Uint32Array;
+  groupCount: number;
+  groupTriCounts: Uint32Array;
+  /** group holding everything too small to be a part, or -1 */
+  debrisGroup: number;
+  debrisPieces: number;
+}
 
 let worker: Worker | null = null;
 let jobSeq = 0;
@@ -10,10 +17,10 @@ function ensureWorker(): Worker {
   if (worker) return worker;
   worker = new Worker(new URL('./split.worker.ts', import.meta.url), { type: 'module' });
   worker.onmessage = (e: MessageEvent) => {
-    const { jobId, ok, triGroup, groupCount, groupTriCounts, error } = e.data;
+    const { jobId, ok, triGroup, groupCount, groupTriCounts, debrisGroup, debrisPieces, error } = e.data;
     const p = pending.get(jobId); if (!p) return;
     pending.delete(jobId);
-    if (ok) p.resolve({ triGroup, groupCount, groupTriCounts });
+    if (ok) p.resolve({ triGroup, groupCount, groupTriCounts, debrisGroup: debrisGroup ?? -1, debrisPieces: debrisPieces ?? 0 });
     else p.reject(new Error(error));
   };
   return worker;
