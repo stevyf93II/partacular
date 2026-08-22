@@ -51,7 +51,16 @@ export class Document {
   private batch: UndoStep[] | null = null;
   private transformBefore: PartTransform | null = null;
   private transformId: string | null = null;
+  /**
+   * The part gestures act on. A single id because dragging, pinching and
+   * twisting only ever make sense for one thing at a time.
+   */
   selectedId: string | null = null;
+  /**
+   * Everything currently selected, including selectedId. Bulk actions work on
+   * this; a plain tap collapses it back to one.
+   */
+  readonly selectedIds = new Set<string>();
   explodeFactor = 0;
 
   on(fn: Listener) { this.listeners.push(fn); }
@@ -73,7 +82,8 @@ export class Document {
 
   reset() {
     this.parts.clear(); this.order = []; this.removed.clear();
-    this.undoStack = []; this.batch = null; this.selectedId = null; this.explodeFactor = 0;
+    this.undoStack = []; this.batch = null;
+    this.selectedId = null; this.selectedIds.clear(); this.explodeFactor = 0;
     this.transformBefore = null; this.transformId = null;
     this.emit({ type: 'reset' });
   }
@@ -98,16 +108,51 @@ export class Document {
   count(): number { return this.parts.size; }
 
   select(id: string | null) {
-    if (this.selectedId === id) return;
+    const alreadyJustThis = this.selectedId === id && this.selectedIds.size === (id ? 1 : 0);
+    if (alreadyJustThis) return;
     this.selectedId = id;
+    this.selectedIds.clear();
+    if (id) this.selectedIds.add(id);
     this.emit({ type: 'selection', id });
+  }
+
+  /** Add or remove one part from the selection, leaving the rest alone. */
+  toggleSelect(id: string) {
+    if (!this.parts.has(id)) return;
+    if (this.selectedIds.has(id)) {
+      this.selectedIds.delete(id);
+      if (this.selectedId === id) this.selectedId = this.lastSelected();
+    } else {
+      this.selectedIds.add(id);
+      this.selectedId = id;
+    }
+    this.emit({ type: 'selection', id: this.selectedId });
+  }
+
+  selectMany(ids: string[]) {
+    this.selectedIds.clear();
+    for (const id of ids) if (this.parts.has(id)) this.selectedIds.add(id);
+    this.selectedId = this.lastSelected();
+    this.emit({ type: 'selection', id: this.selectedId });
+  }
+
+  isSelected(id: string): boolean { return this.selectedIds.has(id); }
+
+  private lastSelected(): string | null {
+    let last: string | null = null;
+    for (const id of this.selectedIds) last = id;
+    return last;
   }
 
   deletePart(id: string) {
     const m = this.parts.get(id); if (!m) return;
     this.parts.delete(id); this.removed.set(id, m);
     this.pushUndo({ kind: 'delete', id });
-    if (this.selectedId === id) this.select(null);
+    this.selectedIds.delete(id);
+    if (this.selectedId === id) {
+      this.selectedId = this.lastSelected();
+      this.emit({ type: 'selection', id: this.selectedId });
+    }
     this.emit({ type: 'part-removed', id });
   }
 

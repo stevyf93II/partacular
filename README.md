@@ -77,6 +77,42 @@ model.
 **Split is unchanged.** Before Split, a tap picks a piece; after Split, a tap
 selects parts exactly as before. Merging back re-enables picking.
 
+## Managing parts
+
+**Parts** opens a list of everything in the model: colour, name, triangle count,
+hidden state. Tapping a row **adds** it to the selection rather than replacing
+it, because picking out twenty scraps to delete is the reason the list exists.
+With a selection you get **Hide**, **Merge** and **Delete**, each one undoable in
+a single step, plus **Select all / none / tiny**.
+
+**Tidy** appears in the top bar only when there are parts too small to matter,
+says how many, and clears them in one action. It never offers to delete the
+largest part, and deleting every part is refused rather than leaving an empty
+document.
+
+### Debris
+
+Split used to cap parts by RANK — keep the hundred biggest groups, bucket the
+rest. On a mesh carrying hundreds of loose scraps, which is most scanned and
+generated geometry, the hundred biggest are still ninety-nine specks, and
+clearing them meant deleting them one at a time.
+
+Size decides now, on two tests that catch different junk: a shell spanning less
+than `debrisBelowFrac` of the model's own diagonal cannot be seen, touched or
+printed however many triangles it has, and a shell under 16 triangles cannot
+describe a solid however far it spreads. Everything below either joins one
+debris part named for what it swept up — `Loose bits (37 pieces)`.
+
+| Split | before | after |
+|---|---|---|
+| a room scan, 26k tris | ~100 parts | **16** |
+| `diablo`, 2M tris | 25 | **16** |
+| `colt`, 2M tris | 20 | **13** |
+
+Triangle count alone was tried first and is the wrong test: a speck can be dense
+and a car panel can be coarse. On `diablo` the real parts are byte-identical
+either way — only the junk moved.
+
 ## Repair, not perfection
 
 Auto-segmentation of a fused mesh has no ground truth. "Where does the door end
@@ -140,10 +176,12 @@ would notice breaking: a dragged part stays pinned to the finger to under a
 pixel, a 2x pinch gives exactly 2x, a 90 degree twist gives exactly 90 degrees,
 undo lands exactly back where it started, carve/join conserve every triangle and
 cost exactly one undo step, and a `pointercancel` leaves no phantom pointers.
-46 checks, including touch-to-select: a held piece is always a part of the
+63 checks, including touch-to-select and the parts list: a held piece is always a part of the
 model rather than all of it, the drag ladder never shrinks as you pull outward,
-taking a piece conserves every triangle and costs exactly one undo step. The
-suite is stripped from production builds by `import.meta.env.DEV`.
+taking a piece conserves every triangle and costs exactly one undo step, bulk
+delete and bulk merge each cost one undo step, deleting every part is refused,
+and the parts list never covers the Open/Save controls. The suite is stripped
+from production builds by `import.meta.env.DEV`.
 
 ## The segmentation gate
 
@@ -245,6 +283,8 @@ Deploys to Netlify (site: partacular) — `netlify.toml` builds `npm run build`,
 - Phase 4 (shipped): print path — Manifold merge to watertight, 3MF export, PWA install
 - Phase 5 (shipped): Carve / Join repair gestures, corpus gate, gesture test suite
 - Phase 6 (shipped): Touch to select — basin merge tree, per-touch selection
+- Phase 7 (shipped): parts list with multi-select, bulk delete/hide/merge, Tidy,
+  and size-based debris bucketing
 - Next: grow the corpus as real models expose new failures; carve currently
   partitions at triangle resolution (no re-triangulation across the cut), which
   is invisible on dense meshes and rough on coarse ones; the first touch on a

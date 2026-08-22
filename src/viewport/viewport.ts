@@ -682,12 +682,16 @@ export class Viewport {
 
   private applySelectionStyle() {
     if (this.pick) return; // a held touch-selection owns the styling
-    const sel = this.doc.selectedId;
+    const doc = this.doc;
+    const any = doc.selectedIds.size > 0;
     for (const [id, v] of this.visuals) {
       const mat = v.mesh.material as THREE.MeshStandardMaterial;
-      if (sel === null) { mat.opacity = 1; mat.emissive.setHex(0x000000); }
-      else if (id === sel) { mat.opacity = 1; mat.emissive.setHex(0x1c3f66); }
-      else { mat.opacity = 0.22; mat.emissive.setHex(0x000000); }
+      if (!any) { mat.opacity = 1; mat.emissive.setHex(0x000000); continue; }
+      if (!doc.isSelected(id)) { mat.opacity = 0.22; mat.emissive.setHex(0x000000); continue; }
+      mat.opacity = 1;
+      // The gesture target glows brighter than the rest of the selection, so it
+      // is obvious which one a drag is about to move.
+      mat.emissive.setHex(id === doc.selectedId ? 0x1c3f66 : 0x11293f);
     }
   }
 }

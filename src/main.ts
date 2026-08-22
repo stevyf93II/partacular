@@ -29,6 +29,10 @@ const ui = initUI(doc, {
   onExport: kind => doExport(kind).catch(err => ui.showToast(`Export failed: ${err.message ?? err}`)),
   onFit: () => viewport.fitCamera(),
   onTidy: () => tidy(),
+  onBulkDelete: () => bulkDelete(),
+  onBulkHide: () => bulkHide(),
+  onBulkMerge: () => bulkMerge(),
+  onSelectTiny: () => doc.selectMany(junkParts().map(m => m.id)),
   onSplitToggle: () => splitOrMerge().catch(err => ui.showToast(String(err.message ?? err))),
   onCarve: () => startCarve(),
   onJoin: () => startJoin(),
@@ -103,6 +107,65 @@ async function splitOrMerge() {
     const n = doc.count();
     ui.showToast(n > 1 ? `Split into ${n} parts` : 'This model is all one connected piece');
   }
+}
+
+/* -------------------------------------------------------------- bulk actions */
+
+/** Delete everything selected, as ONE undoable action. */
+function bulkDelete() {
+  const ids = [...doc.selectedIds];
+  if (!ids.length) return;
+  if (ids.length >= doc.count()) {
+    ui.showToast('That is every part — keep at least one');
+    return;
+  }
+  const tris = ids.reduce((s, id) => s + (doc.get(id)?.triCount ?? 0), 0);
+  doc.beginBatch();
+  for (const id of ids) doc.deletePart(id);
+  doc.endBatch();
+  viewport.refreshModelBounds();
+  refreshTidy();
+  ui.showToast(`Deleted ${ids.length} part${ids.length > 1 ? 's' : ''} (${tris.toLocaleString()} triangles) — Undo brings them back`);
+}
+
+/** Hide everything selected, as ONE undoable action. */
+function bulkHide() {
+  const ids = [...doc.selectedIds];
+  if (!ids.length) return;
+  doc.beginBatch();
+  for (const id of ids) doc.setVisible(id, false);
+  doc.endBatch();
+  ui.showToast(`Hid ${ids.length} part${ids.length > 1 ? 's' : ''}`);
+}
+
+/** Fuse everything selected into one part, as ONE undoable action. */
+function bulkMerge() {
+  const ids = [...doc.selectedIds];
+  if (ids.length < 2) return;
+  const metas = ids.map(id => doc.get(id)).filter(Boolean) as PartMeta[];
+  const soup = bakeParts(metas);
+  if (!soup) return;
+  soup.computeBoundingBox();
+  const c = soup.boundingBox!.getCenter(new THREE.Vector3());
+  soup.translate(-c.x, -c.y, -c.z);
+  soup.computeBoundingBox();
+  soup.computeVertexNormals();
+  const nid = newId();
+  putGeometry(nid, soup);
+  const t = identityTransform();
+  t.position = [c.x, c.y, c.z];
+  const keepName = metas.reduce((a, b) => (b.triCount > a.triCount ? b : a)).name;
+  doc.beginBatch();
+  for (const id of ids) doc.deletePart(id);
+  doc.addParts([{
+    id: nid, name: keepName, triCount: soup.getAttribute('position').count / 3,
+    visible: true, color: metas[0].color, transform: t,
+  }], true);
+  doc.endBatch();
+  doc.select(nid);
+  viewport.refreshModelBounds();
+  refreshTidy();
+  ui.showToast(`Merged ${ids.length} parts into one`);
 }
 
 /* ------------------------------------------------------------------- tidy up */

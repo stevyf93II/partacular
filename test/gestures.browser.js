@@ -320,6 +320,79 @@ export async function run({ verbose = true } = {}) {
     ok(doc.count() === before, 'taking a piece is ONE undo step');
   }
 
+  // -------------------------------------------------------------- parts list --
+  {
+    // Back to several parts so there is something to manage.
+    document.getElementById('splitbtn').click();
+    await sleep(400);
+    ok(doc.count() > 1, `split into ${doc.count()} parts to manage`);
+
+    document.getElementById('partsbtn').click();
+    await sleep(150);
+    const panel = document.getElementById('partspanel');
+    ok(panel.classList.contains('show'), 'Parts opens the list');
+
+    // The list must never cover the top bar controls.
+    const pr = panel.getBoundingClientRect();
+    const openBtn = document.getElementById('openbtn').getBoundingClientRect();
+    ok(pr.top >= openBtn.bottom - 1 || pr.left >= openBtn.right - 1,
+      'the list does not cover Open/Save');
+
+    const rows = () => document.querySelectorAll('.prow');
+    ok(rows().length === doc.count(), `a row per part (${rows().length})`);
+
+    doc.select(null);
+    rows()[0].click(); rows()[1].click(); rows()[2].click();
+    await sleep(80);
+    ok(doc.selectedIds.size === 3, `tapping three rows selects three (${doc.selectedIds.size})`);
+    ok(document.querySelectorAll('.prow.on').length === 3, 'three rows show as selected');
+    rows()[1].click();
+    await sleep(80);
+    ok(doc.selectedIds.size === 2, 'tapping again deselects just that one');
+
+    // Bulk delete is one undo step.
+    const before = doc.count();
+    const doomed = [...doc.selectedIds];
+    document.getElementById('bulkdelete').click();
+    await sleep(200);
+    ok(doc.count() === before - doomed.length, `bulk delete removed ${doomed.length} (${before} -> ${doc.count()})`);
+    doc.undo();
+    await sleep(150);
+    ok(doc.count() === before, 'bulk delete is ONE undo step');
+
+    // Deleting every part is refused rather than leaving an empty document.
+    document.getElementById('selectall').click();
+    await sleep(80);
+    ok(doc.selectedIds.size === doc.count(), 'Select all selects everything');
+    const all = doc.count();
+    document.getElementById('bulkdelete').click();
+    await sleep(150);
+    ok(doc.count() === all, 'deleting every part is refused');
+
+    // Bulk merge fuses a selection into one, conserving triangles.
+    doc.select(null);
+    rows()[0].click(); rows()[1].click();
+    await sleep(80);
+    const merging = [...doc.selectedIds].map(id => doc.get(id).triCount);
+    const n0 = doc.count();
+    document.getElementById('bulkmerge').click();
+    await sleep(250);
+    ok(doc.count() === n0 - 1, `merge: ${n0} -> ${doc.count()} parts`);
+    ok(triTotal() === startTris, `merge conserves every triangle (${triTotal()})`);
+    ok(!!doc.list().find(p => p.triCount === merging[0] + merging[1]),
+      `merged part carries ${merging[0]}+${merging[1]} triangles`);
+    doc.undo();
+    await sleep(150);
+    ok(doc.count() === n0, 'bulk merge is ONE undo step');
+
+    document.getElementById('selectnone').click();
+    await sleep(80);
+    ok(doc.selectedIds.size === 0, 'Select none clears it');
+    document.getElementById('partsclose').click();
+    await sleep(120);
+    ok(!panel.classList.contains('show'), 'Close hides the list');
+  }
+
   // ----------------------------------------------------------- cancel/escape --
   {
     doc.select(biggest().id);
