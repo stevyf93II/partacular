@@ -527,6 +527,35 @@ export async function run({ verbose = true } = {}) {
     }
   }
 
+  // ------------------------------------------------------------ reachability --
+  {
+    // Every control has to be ON the screen. The top bar and the bottom rows
+    // were flex-wrap:nowrap, so on a phone Fit / Save / Open / Stance ran off
+    // the right edge with no scroll and no sign they existed. #pill wrapped and
+    // was the only control that stayed usable, which is what gave it away.
+    const wrapOf = sel => getComputedStyle(document.querySelector(sel)).flexWrap;
+    ok(wrapOf('.topbar') === 'wrap', `the top bar wraps (${wrapOf('.topbar')})`);
+    ok(wrapOf('#pickbar') === 'wrap', `the held-piece bar wraps (${wrapOf('#pickbar')})`);
+    ok(wrapOf('#pill') === 'wrap', `the part pill wraps (${wrapOf('#pill')})`);
+
+    doc.select(doc.list()[0].id);
+    document.getElementById('stancebtn').click();
+    await sleep(150);
+    const offscreen = [];
+    for (const b of document.querySelectorAll('.topbar button, #pickbar button, #stancerow button, #pill button')) {
+      const r = b.getBoundingClientRect();
+      if (r.width === 0) continue;
+      if (r.right > innerWidth + 0.5 || r.left < -0.5 || r.bottom > innerHeight + 0.5 || r.top < -0.5) {
+        offscreen.push(b.id || b.textContent.trim());
+      }
+    }
+    ok(offscreen.length === 0,
+      offscreen.length ? `controls off screen: ${offscreen.join(', ')}` : 'every visible control is inside the viewport');
+    ok(document.documentElement.scrollWidth <= innerWidth,
+      'the page never scrolls sideways');
+    document.getElementById('stancedone').click();
+  }
+
   // ----------------------------------------------------------- cancel/escape --
   {
     doc.select(biggest().id);

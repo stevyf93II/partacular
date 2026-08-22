@@ -172,6 +172,25 @@ The gesture suite asserts it: no control may sit past the edge of the screen,
 and the page may never scroll sideways. Run it at a phone width for that to mean
 anything — `80/80` passes at both 375x812 and 1280x800.
 
+## Mobile
+
+Every bar wraps. The top bar and the bottom rows were `flex-wrap: nowrap`, so on
+a phone Fit, Save, Open and Stance ran off the right edge with no scroll and no
+sign they existed — `#pill` was the one control that wrapped, and the one that
+stayed usable. The wordmark also shrinks below 560px, where it had been taking
+nearly half the width before a single button got a look in.
+
+The gesture suite guards this two ways: it asserts the computed `flex-wrap` of
+each bar (width-independent, catches the exact regression) and that no visible
+control lies outside the viewport. Run it at phone size:
+
+```bash
+npm run dev
+# open http://localhost:5199/?gtest=1 in a 375px-wide window
+```
+
+85 checks pass at 375x812.
+
 ## Managing parts
 
 **Parts** opens a list of everything in the model: colour, name, triangle count,
