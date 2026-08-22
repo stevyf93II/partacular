@@ -430,6 +430,18 @@ export async function run({ verbose = true } = {}) {
       'parts stay rigidly together — the model tilts, it does not come apart');
     ok(mid.some((m, i) => m.r.some((v, k) => Math.abs(v - before[i].r[k]) > 1e-4)),
       'every part is turned, not merely shifted');
+
+    // IT MUST ROCK. One end down by as much as the other goes up -- a lever
+    // about the middle. This is what re-seating the model on the grid used to
+    // destroy: the end that dropped got shoved straight back up, so the whole
+    // model only ever rose and never tilted the way a lowered front end does.
+    const rose = mid.filter((m, i) => m.p[1] - before[i].p[1] > 1e-4).length;
+    const fell = mid.filter((m, i) => m.p[1] - before[i].p[1] < -1e-4).length;
+    ok(rose > 0 && fell > 0, `rake rocks like a lever: ${rose} part(s) up, ${fell} part(s) down`);
+    const up = Math.max(...mid.map((m, i) => m.p[1] - before[i].p[1]));
+    const down = Math.min(...mid.map((m, i) => m.p[1] - before[i].p[1]));
+    ok(Math.abs(up + down) < Math.max(up, -down) * 0.6,
+      `the two ends move by comparable amounts (+${up.toFixed(4)} / ${down.toFixed(4)})`);
     ok(triTotal() === startTris, 'rake never touches geometry');
 
     rake.dispatchEvent(new Event('change', { bubbles: true }));

@@ -127,9 +127,11 @@ the stance the stroke started at, so dragging back to zero returns exactly where
 it began rather than accumulating drift. One stroke is one undo step, however
 many parts moved. **Level** puts it back flat.
 
-Raking the whole model re-seats it on the grid afterwards; raking a selection
-does not, because dropping a lone selection to the floor would tear it away from
-everything else.
+It rocks like a lever: the model pivots about its true centre, so one end drops
+by as much as the other rises. It is deliberately **not** re-seated on the grid
+afterwards — lifting the model so nothing sits below zero undoes half the
+gesture, shoving the end that just dropped straight back up, and you get a model
+that only ever rises instead of a front end that goes down.
 
 ### Framing
 

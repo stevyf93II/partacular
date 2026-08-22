@@ -159,11 +159,18 @@ function lateralAxis(ids: string[]): THREE.Vector3 {
   return size.x >= size.z ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
 }
 
+/**
+ * The fulcrum: the true middle of the model, geometry included.
+ *
+ * Part ORIGINS alone are not the middle -- they cluster wherever the splitter
+ * happened to centre each piece. Rocking about the real centre is what makes
+ * one end drop by as much as the other rises.
+ */
 function rakePivot(ids: string[]): THREE.Vector3 {
   const box = new THREE.Box3();
   for (const id of ids) {
-    const m = doc.get(id);
-    if (m) box.expandByPoint(new THREE.Vector3(...m.transform.position));
+    const b = partWorldBox(id);
+    if (b) box.union(b);
   }
   return box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
 }
@@ -179,22 +186,6 @@ function partWorldBox(id: string): THREE.Box3 | null {
     new THREE.Vector3(...m.transform.scale),
   );
   return geo.boundingBox!.clone().applyMatrix4(mtx);
-}
-
-/** Rest the given parts back on the grid after tilting them. */
-function groundParts(ids: string[]) {
-  const box = new THREE.Box3();
-  for (const id of ids) {
-    const b = partWorldBox(id);
-    if (b) box.union(b);
-  }
-  if (box.isEmpty() || Math.abs(box.min.y) < 1e-9) return;
-  const lift = -box.min.y;
-  for (const id of ids) {
-    const m = doc.get(id); if (!m) continue;
-    const p = m.transform.position;
-    doc.updateTransform(id, { position: [p[0], p[1] + lift, p[2]] });
-  }
 }
 
 function rake(deg: number, phase: 'start' | 'move' | 'end') {
@@ -223,9 +214,10 @@ function rake(deg: number, phase: 'start' | 'move' | 'end') {
         rotation: q.toArray() as [number, number, number, number],
       });
     }
-    // Only re-seat the model when the whole of it moved; dropping a lone
-    // selection onto the grid would tear it away from everything else.
-    if (rakeTargets.length === doc.count()) groundParts(rakeTargets);
+    // Deliberately NOT re-seated on the grid. Lifting the model so nothing sits
+    // below zero undoes half the gesture: the end that just dropped gets pushed
+    // straight back up, so the model only ever rises and never rocks. Rake is a
+    // lever about the middle -- one end down, the other up by the same amount.
   };
 
   if (phase === 'move') { apply(); viewport.refreshModelBounds(); return; }
